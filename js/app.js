@@ -1,7 +1,8 @@
-import { decompose, neededJamo, syllableBoxes, basic } from './hangul.js';
+import { decompose, neededJamo } from './hangul.js';
 import { buildGraph } from './graph.js';
 import { findJamo } from './matcher.js';
 import { SUPPORTED } from './templates.js';
+import { findSyllable } from './syllable.js';
 
 const COLORS = ['#e23b2e', '#2b6cdf', '#16a06a', '#d8860b', '#8a3fd1', '#d63384', '#0f8b9c', '#6b6b00', '#b5531b', '#3a4a8c'];
 // 여러 Overpass 서버에 동시에 요청해서 가장 먼저 오는 응답을 사용
@@ -12,6 +13,7 @@ const OVERPASS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const MAX_AREA_KM2 = 10;
+const MIN_SYL = 20; // 이보다 낮으면 글자로 읽히지 않아 보여주지 않음
 const DEG = Math.PI / 180;
 
 const $ = id => document.getElementById(id);
@@ -28,7 +30,7 @@ let mode = qs.get('c') ? 'local' : 'nation';
 if (qs.get('c')) { const [a, b, z] = qs.get('c').split(',').map(Number); if (!isNaN(a)) map.setView([a, b], z || 16); }
 
 // 화면에 그리는 단위: 길로 찾은 한 '조각' = { j, s, r, g: [[ [lat,lon], ... ], ...] }
-// 음절 하나 = { char, kind: 'syllable'|'jamo'|'missing', s, lat, lon, r, parts:[조각], slots? }
+// 음절 하나 = { char, kind: 'syllable'|'missing', cands:[{s, lat, lon, r, size, parts:[조각]}], sel }
 let state = null;
 
 function setStatus(msg, err = false) { $('status').textContent = msg; $('status').className = 'status' + (err ? ' err' : ''); }
@@ -41,44 +43,32 @@ function setMode(m) {
   $('go').textContent = m === 'nation' ? '전국에서 찾기' : '이 지역에서 찾기';
   $('foot-wrap').hidden = m === 'nation';
   setStatus(m === 'nation'
-    ? '전국 도로를 미리 분석해 둔 결과에서, 음절 모양 그대로 이어진 길을 먼저 찾아요.'
+    ? '전국 도로를 미리 분석해 둔 결과에서, 자모가 한 글자로 붙어 있는 길만 찾아요.'
     : '지도를 원하는 동네로 옮긴 뒤 찾기를 누르세요. (약 3km 이내 범위)');
 }
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
 
 // ── 전국 모드 ─────────────────────────────────────────────
 const shardCache = new Map();
-let jamoNation = null;
 async function loadJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${url} ${r.status}`); return r.json(); }
 async function shard(i) {
   if (!shardCache.has(i)) shardCache.set(i, loadJSON(`data/syl/${i}.json`));
   return shardCache.get(i);
 }
 
+// 음절은 자모가 실제로 한 덩어리로 붙어 있는 곳만 인정한다 (따로 찾아 붙이지 않음)
 async function runNation(name) {
   const syllables = decompose(name);
   setStatus('전국 데이터를 불러오는 중…');
-  jamoNation ??= await loadJSON('data/jamo.json');
   const out = [];
   for (const s of syllables) {
-    if (s.single) { out.push(jamoUnit(s, s.single)); continue; }
+    if (s.single) { out.push({ char: s.char, syl: s, kind: 'missing' }); continue; }
     const code = s.char.charCodeAt(0) - 0xAC00;
     const data = await shard(Math.floor(code / 588));
-    const cands = data[s.char] || [];
-    if (cands.length && cands[0].k === 'c') out.push({ char: s.char, syl: s, kind: 'cluster', cands, sel: 0, slots: syllableBoxes(s) });
-    else if (cands.length) out.push({ char: s.char, syl: s, kind: 'syllable', cands, sel: 0 });
-    else out.push(jamoUnit(s));
+    const cands = (data[s.char] || []).filter(c => c.k !== 'c' && c.s >= MIN_SYL);
+    out.push(cands.length ? { char: s.char, syl: s, kind: 'syllable', cands, sel: 0 } : { char: s.char, syl: s, kind: 'missing' });
   }
   return out;
-}
-
-// 음절이 통째로 없으면 전국 최고 자모로 조합
-function jamoUnit(s) {
-  const parts = syllableBoxes(s).map(([j, box], k) => {
-    const L = jamoNation?.[j] || [];
-    return { j, box, cands: L, sel: 0 };
-  });
-  return { char: s.char, syl: s, kind: 'jamo', jparts: parts };
 }
 
 // ── 지역 모드 (지금 보는 지도 범위를 실시간 분석) ────────────────
@@ -122,22 +112,35 @@ async function runLocal(name) {
   const osm = await fetchRoads(b, $('foot').checked);
   const G = buildGraph(osm, [b.getCenter().lat, b.getCenter().lng]);
   const list = neededJamo(syllables);
-  const found = {};
+  const cands = [];
   for (let i = 0; i < list.length; i++) {
     const j = list[i];
     setStatus(`'${j}' 모양 찾는 중… (${i + 1}/${list.length}, 길 조각 ${G.edges.length}개)`);
     await tick();
-    const ms = SUPPORTED.has(j) ? findJamo(G, j, { limit: 10, timeBudgetMs: 5000 }) : [];
-    found[j] = ms.map(m => {
-      const g = m.edges.map(eid => G.edges[eid].ll);
-      const all = g.flat();
-      return { j, s: m.score, r: m.r, size: m.size, g, lat: all.reduce((a, p) => a + p[0], 0) / all.length, lon: all.reduce((a, p) => a + p[1], 0) / all.length };
-    });
+    const ms = SUPPORTED.has(j) ? findJamo(G, j, { limit: 80, timeBudgetMs: 5000, minScore: 25 }) : [];
+    for (const m of ms) cands.push(describe(G, m, j));
   }
-  return syllables.map(s => ({
-    char: s.char, syl: s, kind: 'jamo',
-    jparts: syllableBoxes(s).map(([j, box]) => ({ j, box, cands: found[j] || [], sel: 0 })),
-  }));
+  setStatus('자모가 한 음절로 붙어 있는 곳을 찾는 중…');
+  await tick();
+  return syllables.map(s => {
+    const found = s.single ? [] : findSyllable(cands, s).filter(c => c.s >= MIN_SYL);
+    return found.length ? { char: s.char, syl: s, kind: 'syllable', cands: found, sel: 0 } : { char: s.char, syl: s, kind: 'missing' };
+  });
+}
+
+// 매칭 결과 → 글자 방향으로 세운 상자 크기·중심 (scan.mjs와 같은 방식)
+function describe(G, m, j) {
+  const c = Math.cos(-m.r), s = Math.sin(-m.r);
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  const g = [];
+  for (const eid of m.edges) {
+    const E = G.edges[eid];
+    for (const [x, y] of E.pts) { const u = x * c - y * s, v = x * s + y * c; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+    g.push(E.ll);
+  }
+  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, ci = Math.cos(m.r), si = Math.sin(m.r);
+  const [lat, lon] = G.proj.inv(cu * ci - cv * si, cu * si + cv * ci);
+  return { j, s: m.score, r: m.r, lat, lon, w: Math.max(4, u1 - u0), h: Math.max(4, v1 - v0), g };
 }
 
 async function run(ev) {
@@ -148,15 +151,11 @@ async function run(ev) {
   layer.clearLayers();
   try {
     const units = mode === 'nation' ? await runNation(name) : await runLocal(name);
-    // 같은 자모가 여러 번 나오면 서로 다른 후보를 쓰도록
-    const seen = {};
-    for (const u of units) if (u.kind === 'jamo') for (const p of u.jparts) { const k = seen[p.j] = (seen[p.j] ?? -1) + 1; if (p.cands.length) p.sel = k % p.cands.length; }
     state = { units, name };
-    const whole = units.filter(u => u.kind === 'syllable').length, near = units.filter(u => u.kind === 'cluster').length;
-    setStatus(mode === 'nation'
-      ? (whole === units.length ? `${units.length}글자 모두 음절 모양 그대로 이어진 길을 전국에서 찾았어요.`
-        : `${units.length}글자 중 ${whole}글자는 음절 모양 그대로 이어진 길을 찾았어요.` + (near ? ` ${near}글자는 한 동네 안의 자모를 모아 만들었어요.` : '') + (units.length - whole - near ? ' 나머지는 전국 최고 자모로 채웠어요.' : ''))
-      : `이 지역에서 자모를 찾아 이름을 만들었어요. 후보를 눌러 바꿔 볼 수 있어요.`);
+    const whole = units.filter(u => u.kind === 'syllable').length;
+    const where = mode === 'nation' ? '전국에서' : '이 지역에서';
+    setStatus(whole === units.length ? `${units.length}글자 모두 자모가 한 덩어리로 붙은 길을 ${where} 찾았어요.`
+      : `${units.length}글자 중 ${whole}글자를 ${where} 찾았어요. 못 찾은 글자는 회색으로 표시했어요.` + (mode === 'nation' ? ' (지역 모드에서 다른 동네를 직접 찾아볼 수도 있어요)' : ' 지도를 옮겨 다시 찾아보세요.'));
     const c = map.getCenter();
     history.replaceState(null, '', `?name=${encodeURIComponent(name)}` + (mode === 'local' ? `&c=${c.lat.toFixed(5)},${c.lng.toFixed(5)},${map.getZoom()}` : ''));
     render();
@@ -184,30 +183,16 @@ function pathsSvg(paths, box, color, sw) {
   const d = paths.map(p => 'M' + p.map(([x, y]) => `${(ox + (x - x0) * k).toFixed(1)},${(oy + (y - y0) * k).toFixed(1)}`).join('L')).join('');
   return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
-const partPaths = p => upright(p.g, p.r, p.lat, p.lon);
 const ghost = (j, box) => `<text x="${box[0] + box[2] / 2}" y="${box[1] + box[3] / 2}" font-size="${Math.min(box[2], box[3]) * .8}" text-anchor="middle" dominant-baseline="central" fill="#c9c6bd" font-family="Noto Sans KR">${j}</text>`;
 
-function clusterSvg(u, c, ox, oy, S, color, sw) {
-  return u.slots.map(([j, b], i) => {
-    const box = [ox + b[0] * S / 100, oy + b[1] * S / 100, b[2] * S / 100, b[3] * S / 100];
-    return c.parts[i] ? pathsSvg(partPaths(c.parts[i]), box, color, sw) : ghost(j, box);
-  }).join('');
-}
-
 function unitSvg(u, ox, S, color, sw) {
-  if (u.kind === 'cluster') return clusterSvg(u, u.cands[u.sel], ox, 0, S, color, sw);
+  if (u.kind === 'missing') return ghost(u.char, [ox, 0, S, S]);
   if (u.kind === 'syllable') {
     const c = u.cands[u.sel];
     const paths = c.parts.flatMap(p => upright(p.g, c.r, c.lat, c.lon));
     return pathsSvg(paths, [ox, 0, S, S], color, sw);
   }
-  let body = '';
-  for (const p of u.jparts) {
-    const box = [ox + p.box[0] * S / 100, p.box[1] * S / 100, p.box[2] * S / 100, p.box[3] * S / 100];
-    const m = p.cands[p.sel];
-    body += m ? pathsSvg(partPaths(m), box, color, sw) : ghost(p.j, box);
-  }
-  return body;
+  return '';
 }
 
 function renderCard() {
@@ -220,8 +205,8 @@ function renderCard() {
 
 // 지도에 표시할 조각들
 function unitPieces(u) {
-  if (u.kind === 'syllable' || u.kind === 'cluster') return u.cands[u.sel].parts;
-  return u.jparts.map(p => p.cands[p.sel]).filter(Boolean);
+  if (u.kind === 'missing') return [];
+  return u.cands[u.sel].parts;
 }
 function renderMap() {
   layer.clearLayers();
@@ -231,7 +216,7 @@ function renderMap() {
       const pl = L.polyline(p.g, { color, weight: 6, opacity: .9, lineCap: 'round' }).addTo(layer);
       pl.on('click', () => focusUnit(u));
     }
-    const at = u.cands ? u.cands[u.sel] : unitPieces(u)[0];
+    const at = u.cands?.[u.sel];
     if (at) L.marker([at.lat, at.lon], { icon: L.divIcon({ className: 'syl-pin', html: `<span style="background:${color}">${u.char}</span>`, iconSize: [30, 30] }) })
       .on('click', () => focusUnit(u)).addTo(layer);
   });
@@ -239,7 +224,7 @@ function renderMap() {
 function piecesBounds(pieces) { return L.latLngBounds(pieces.flatMap(p => p.g.flat())); }
 function focusUnit(u) {
   const pcs = unitPieces(u);
-  if (pcs.length) map.fitBounds(piecesBounds(pcs).pad(u.kind === 'jamo' ? 1.2 : 0.6), { maxZoom: 18 });
+  if (pcs.length) map.fitBounds(piecesBounds(pcs).pad(0.6), { maxZoom: 18 });
 }
 function fitAll() {
   const pcs = state.units.flatMap(unitPieces);
@@ -256,7 +241,7 @@ function renderList() {
     const div = document.createElement('div');
     div.className = 'jamo';
     const head = document.createElement('h3');
-    const kindTxt = { syllable: '음절 모양 그대로 이어진 길', cluster: '한 동네의 자모를 모아 만듦', jamo: '전국 최고 자모를 모아 만듦' }[u.kind];
+    const kindTxt = u.kind === 'syllable' ? '자모가 한 덩어리로 붙은 길' : '아직 못 찾음';
     head.innerHTML = `<span class="big" style="background:${color}">${u.char}</span><span class="cnt">${kindTxt}</span>`;
     div.appendChild(head);
     const row = document.createElement('div');
@@ -269,23 +254,19 @@ function renderList() {
       b.onclick = onclick;
       row.appendChild(b);
     };
-    if (u.kind === 'syllable' || u.kind === 'cluster') {
+    if (u.kind === 'missing') {
+      const m = document.createElement('span'); m.className = 'none';
+      m.textContent = `'${u.char}' 모양으로 자모가 붙어 있는 길을 ${mode === 'nation' ? '전국에서' : '이 지역에서'} 아직 못 찾았어요.`;
+      row.appendChild(m);
+    } else if (u.kind === 'syllable') {
       u.cands.forEach((c, k) => {
-        const inner = u.kind === 'cluster' ? clusterSvg(u, c, 2, 2, 36, color, 2) : pathsSvg(c.parts.flatMap(p => upright(p.g, c.r, c.lat, c.lon)), [0, 0, 40, 40], color, 2.5);
+        const inner = pathsSvg(c.parts.flatMap(p => upright(p.g, c.r, c.lat, c.lon)), [0, 0, 40, 40], color, 2.5);
         chip(inner, `${c.s}`, k === u.sel, () => { u.sel = k; render(); focusUnit(u); },
           `점수 ${c.s} · 약 ${c.size}m · ${placeLabel(c.lat, c.lon)}`);
       });
-    } else {
-      for (const p of u.jparts) {
-        if (!p.cands.length) { const s = document.createElement('span'); s.className = 'none'; s.textContent = `${p.j}: 못 찾음`; row.appendChild(s); continue; }
-        p.cands.slice(0, 6).forEach((m, k) => {
-          chip(pathsSvg(partPaths(m), [0, 0, 40, 40], color, 3), `${p.j}${m.s}`, k === p.sel, () => { p.sel = k; render(); focusUnit(u); },
-            `점수 ${m.s} · ${placeLabel(m.lat, m.lon)}`);
-        });
-      }
     }
     div.appendChild(row);
-    const at = u.cands ? u.cands[u.sel] : unitPieces(u)[0];
+    const at = u.cands?.[u.sel];
     if (at) {
       const a = document.createElement('a');
       a.className = 'where'; a.href = `https://map.kakao.com/link/map/${encodeURIComponent(u.char)},${at.lat},${at.lon}`;

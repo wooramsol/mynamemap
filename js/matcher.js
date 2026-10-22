@@ -292,6 +292,7 @@ function suppress(list, limit) {
 export function findJamo(G, jamo, opts = {}) {
   const tpl = TEMPLATES[jamo];
   if (!tpl) return [];
-  const raw = tpl.kind === 'loop' ? matchLoops(G) : matchGraphTemplate(G, tpl, opts);
-  return suppress(raw, opts.limit ?? 12).map(m => ({ ...m, jamo, approx: !!tpl.approx }));
+  const variants = Array.isArray(tpl) ? tpl : [tpl];
+  const raw = variants.flatMap(v => (v.kind === 'loop' ? matchLoops(G) : matchGraphTemplate(G, v, opts)));
+  return suppress(raw, opts.limit ?? 12).map(m => ({ ...m, jamo, approx: !!variants[0].approx }));
 }

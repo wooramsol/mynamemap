@@ -4,8 +4,10 @@ import { findJamo } from './matcher.js';
 import { SUPPORTED } from './templates.js';
 
 const COLORS = ['#e23b2e', '#2b6cdf', '#16a06a', '#d8860b', '#8a3fd1', '#d63384', '#0f8b9c', '#6b6b00', '#b5531b', '#3a4a8c'];
+// 여러 Overpass 서버에 동시에 요청해서 가장 먼저 오는 응답을 사용
 const OVERPASS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
@@ -13,9 +15,9 @@ const MAX_AREA_KM2 = 10;
 
 const $ = id => document.getElementById(id);
 const map = L.map('map', { zoomControl: true }).setView([37.5195, 127.0975], 16);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  maxZoom: 20, subdomains: 'abcd',
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, className: 'base-tiles',
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 const layer = L.layerGroup().addTo(map);
 
@@ -35,15 +37,24 @@ async function fetchRoads(b, foot) {
   if (!foot) excl.push('footway', 'path', 'cycleway', 'bridleway', 'track', 'pedestrian');
   const bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(6)).join(',');
   const q = `[out:json][timeout:60];way["highway"]["highway"!~"^(${excl.join('|')})$"]["area"!="yes"]["footway"!~"^(sidewalk|crossing)$"](${bbox});(._;>;);out skel qt;`;
-  let lastErr;
-  for (const url of OVERPASS) {
-    try {
-      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+  const ctrls = OVERPASS.map(() => new AbortController());
+  const timer = setTimeout(() => ctrls.forEach(c => c.abort()), 60000);
+  try {
+    return await Promise.any(OVERPASS.map(async (url, i) => {
+      const res = await fetch(url, {
+        method: 'POST', body: 'data=' + encodeURIComponent(q), signal: ctrls[i].signal,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
-    } catch (e) { lastErr = e; }
+      const json = await res.json();
+      ctrls.forEach((c, k) => k !== i && c.abort()); // 나머지 요청은 취소
+      return json;
+    }));
+  } catch (e) {
+    throw new Error('모든 지도 데이터 서버가 응답하지 않음');
+  } finally {
+    clearTimeout(timer);
   }
-  throw lastErr;
 }
 
 function areaKm2(b) {

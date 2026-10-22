@@ -237,4 +237,5 @@ function savePng() {
 
 $('search').addEventListener('submit', run);
 $('save').addEventListener('click', savePng);
-if (qs.get('name') && qs.get('c')) run();
+// 공유 링크로 들어오면 지도 크기가 잡힌 뒤 자동으로 찾기
+if (qs.get('name') && qs.get('c')) setTimeout(() => { map.invalidateSize(); run(); }, 400);

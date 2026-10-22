@@ -26,6 +26,8 @@ button.ghost { background: #fff; color: var(--fg); padding: 8px 12px; width: 100
 #card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
 #card svg { width: 100%; height: auto; display: block; }
 #card-wrap { display: flex; flex-direction: column; gap: 8px; }
+#card-wrap[hidden] { display: none; }
+.base-tiles { filter: grayscale(1) contrast(.85) brightness(1.08); }
 
 .jamo { border-top: 1px solid var(--line); padding-top: 10px; }
 .jamo h3 { margin: 0 0 6px; font-size: 15px; display: flex; align-items: center; gap: 8px; }

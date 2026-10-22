@@ -12,20 +12,23 @@ const BUF = 0.006;                        // 약 600m 겹침 (경계에 걸친 �
 const JAMO = (process.env.JAMO ? process.env.JAMO.split(',') : Object.keys(TEMPLATES)).filter(j => j !== 'ㅎ'); // ㅎ은 ㅇ 결과를 그대로 씀
 const KEEP = 250, MIN_SCORE = 30, MIN_LINE = 45;
 
+// 메모리를 아끼려고 모든 길을 평평한 배열 하나에 담는다 (way i = off[i]..off[i+1])
 function readWays(file) {
   const buf = fs.readFileSync(file);
   let o = 0;
   const n = buf.readUInt32LE(o); o += 4;
-  const ways = new Array(n);
+  const total = (buf.length - 4 - 4 * n) / 16;
+  const off = new Uint32Array(n + 1), ids = new Float64Array(total), lat = new Float64Array(total), lon = new Float64Array(total);
+  let p = 0;
   for (let i = 0; i < n; i++) {
     const m = buf.readUInt32LE(o); o += 4;
-    const ids = new Float64Array(m), lat = new Float64Array(m), lon = new Float64Array(m);
-    for (let k = 0; k < m; k++) {
-      ids[k] = Number(buf.readBigInt64LE(o)); lat[k] = buf.readInt32LE(o + 8) / 1e7; lon[k] = buf.readInt32LE(o + 12) / 1e7; o += 16;
+    off[i] = p;
+    for (let k = 0; k < m; k++, p++) {
+      ids[p] = Number(buf.readBigInt64LE(o)); lat[p] = buf.readInt32LE(o + 8) / 1e7; lon[p] = buf.readInt32LE(o + 12) / 1e7; o += 16;
     }
-    ways[i] = { ids, lat, lon };
   }
-  return ways;
+  off[n] = p;
+  return { n, off, ids, lat, lon, length: n };
 }
 
 const tkey = (a, b) => `${a}_${b}`;
@@ -34,9 +37,9 @@ const tkey = (a, b) => `${a}_${b}`;
 function bucket(ways) {
   const tiles = new Map();
   for (let wi = 0; wi < ways.length; wi++) {
-    const w = ways[wi];
+    const w = ways;
     let la0 = Infinity, la1 = -Infinity, lo0 = Infinity, lo1 = -Infinity;
-    for (let k = 0; k < w.lat.length; k++) { la0 = Math.min(la0, w.lat[k]); la1 = Math.max(la1, w.lat[k]); lo0 = Math.min(lo0, w.lon[k]); lo1 = Math.max(lo1, w.lon[k]); }
+    for (let k = w.off[wi]; k < w.off[wi + 1]; k++) { la0 = Math.min(la0, w.lat[k]); la1 = Math.max(la1, w.lat[k]); lo0 = Math.min(lo0, w.lon[k]); lo1 = Math.max(lo1, w.lon[k]); }
     const a0 = Math.floor((la0 - BUF) / TILE_LAT), a1 = Math.floor((la1 + BUF) / TILE_LAT);
     const b0 = Math.floor((lo0 - BUF) / TILE_LON), b1 = Math.floor((lo1 + BUF) / TILE_LON);
     for (let a = a0; a <= a1; a++) for (let b = b0; b <= b1; b++) {
@@ -52,10 +55,10 @@ function tileElements(ways, list, a, b) {
   const s = a * TILE_LAT - BUF, n = (a + 1) * TILE_LAT + BUF, w = b * TILE_LON - BUF, e = (b + 1) * TILE_LON + BUF;
   const nodes = new Map(), out = [];
   for (const wi of list) {
-    const W = ways[wi];
+    const W = ways;
     let run = [];
     const flush = () => { if (run.length > 1) out.push({ type: 'way', nodes: run }); run = []; };
-    for (let k = 0; k < W.lat.length; k++) {
+    for (let k = W.off[wi]; k < W.off[wi + 1]; k++) {
       const inside = W.lat[k] >= s && W.lat[k] <= n && W.lon[k] >= w && W.lon[k] <= e;
       if (!inside) { flush(); continue; }
       const id = W.ids[k];

@@ -2,13 +2,15 @@
 
 사용: python3 scripts/extract.py south-korea-latest.osm.pbf data/ways.bin
 형식: [uint32 way수] 반복{ uint32 n, n×(int64 nodeId, int32 lat*1e7, int32 lon*1e7) }
-사이트의 '보행로 제외' 필터와 같은 기준을 쓴다.
+기본은 사이트의 '보행로 제외' 필터와 같은 기준. 세 번째 인자로 --foot 을 주면
+보행로·산책로·단지 안 길(footway, path, pedestrian, cycleway, track)까지 포함한다.
 """
 import struct
 import sys
 
 import osmium
 
+FOOT = {'footway', 'path', 'cycleway', 'bridleway', 'track', 'pedestrian'}
 EXCLUDE = {
     'motorway', 'motorway_link', 'trunk', 'trunk_link', 'proposed', 'construction', 'abandoned', 'platform',
     'elevator', 'corridor', 'steps', 'bus_stop', 'raceway', 'rest_area', 'services',
@@ -17,14 +19,15 @@ EXCLUDE = {
 
 
 class Roads(osmium.SimpleHandler):
-    def __init__(self, out):
+    def __init__(self, out, foot=False):
         super().__init__()
         self.out = out
+        self.exclude = EXCLUDE - FOOT if foot else EXCLUDE
         self.count = 0
 
     def way(self, w):
         hw = w.tags.get('highway')
-        if not hw or hw in EXCLUDE or w.tags.get('area') == 'yes':
+        if not hw or hw in self.exclude or w.tags.get('area') == 'yes':
             return
         if w.tags.get('footway') in ('sidewalk', 'crossing'):
             return
@@ -41,10 +44,10 @@ class Roads(osmium.SimpleHandler):
         self.count += 1
 
 
-def main(src, dst):
+def main(src, dst, foot=False):
     with open(dst, 'wb') as f:
         f.write(struct.pack('<I', 0))
-        h = Roads(f)
+        h = Roads(f, foot)
         h.apply_file(src, locations=True, idx='flex_mem')
         f.seek(0)
         f.write(struct.pack('<I', h.count))
@@ -52,4 +55,4 @@ def main(src, dst):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], '--foot' in sys.argv[3:])

@@ -17,12 +17,16 @@
       <p class="sub">지도 속 길에서 내 이름의 자모를 찾아요</p>
     </header>
 
+    <div class="tabs">
+      <button type="button" class="tab on" data-mode="nation">전국</button>
+      <button type="button" class="tab" data-mode="local">지금 보는 지역</button>
+    </div>
     <form id="search">
       <input id="name" type="text" value="정우람솔" maxlength="8" placeholder="이름 입력" autocomplete="off">
-      <button type="submit" id="go">이 지역에서 찾기</button>
+      <button type="submit" id="go">전국에서 찾기</button>
     </form>
-    <label class="opt"><input type="checkbox" id="foot"> 보행로·산책로도 포함</label>
-    <p id="status" class="status">지도를 원하는 동네로 옮긴 뒤 찾기를 누르세요. (약 3km 이내 범위)</p>
+    <label class="opt" id="foot-wrap"><input type="checkbox" id="foot"> 보행로·산책로도 포함</label>
+    <p id="status" class="status"></p>
 
     <section id="card-wrap" hidden>
       <div id="card"></div>

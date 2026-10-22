@@ -2,7 +2,15 @@
 
 이름을 입력하면 지도 속 **길 모양**에서 한글 자모를 찾아, 길로 쓴 내 이름을 만들어 주는 웹사이트입니다.
 
-## 작동 방식
+## 두 가지 모드
+
+- **전국**: 전국 도로를 미리 분석해 둔 결과(`data/`)에서 음절을 찾습니다.
+  1. 음절 모양 그대로 이어진 길 (예: ㄹ·ㅏ·ㅁ이 '람' 배치로 붙어 있는 곳)
+  2. 없으면 한 동네(수백 m) 안의 자모를 모아 만든 음절
+  3. 그것도 없으면 전국에서 가장 닮은 자모를 모아서
+- **지금 보는 지역**: 지도 범위의 도로를 실시간으로 불러와 자모를 찾습니다.
+
+## 작동 방식 (지역 모드)
 
 1. 지금 보고 있는 지도 범위의 도로 데이터를 OpenStreetMap(Overpass API)에서 불러옵니다.
 2. 도로를 교차로·꺾이는 점(노드)과 거의 직선인 도로 조각(엣지)으로 된 그래프로 바꿉니다. (`js/graph.js`)
@@ -22,10 +30,23 @@ python3 -m http.server 8000
 
 엔진 테스트: `node test/synthetic.mjs`
 
+## 전국 데이터 다시 만들기
+
+```bash
+pip install osmium
+# https://download.geofabrik.de/asia/south-korea.html 에서 south-korea-latest.osm.pbf 받기
+python3 scripts/extract.py south-korea-latest.osm.pbf work/ways.bin      # 도로만 추출 (약 1분)
+node scripts/scan.mjs work/ways.bin work/cands.jsonl                       # 4km 격자 5,900여 칸 자모 후보 (2코어 약 40분)
+node --max-old-space-size=5000 scripts/compose.mjs work/cands.jsonl data   # 음절 조합 → data/ (약 7분)
+```
+
+- `scan.mjs`: 칸마다 모든 자모 템플릿을 돌려 후보(점수·방향·크기·모양)를 저장
+- `compose.mjs`: 첫 자모(초성)를 기준으로 나머지 자모가 음절 배치(`syllableBoxes`)대로 놓여 있는지 확인해 11,172개 음절 각각의 상위 3곳을 고름. ㅈ(=ㅡ+ㅅ), ㅎ(=ㅡ+ㅇ)은 두 후보를 위아래로 붙여 만들기도 함
+
 ## 다음 단계
 
-- 전국 도로를 미리 분석해 둔 색인 → 지역 상관없이 가장 예쁜 자모 찾기
-- 근처 자모를 묶어 음절 단위(예: '람')로 찾기
+- 장소 이름(동네 이름) 표시
+- 보행로까지 포함한 전국 데이터
 - ㅎ 전용 템플릿, 결과 공유 링크 이미지
 
 도로 데이터 © OpenStreetMap contributors (ODbL)

@@ -7,8 +7,8 @@ import { CHO, JUNG, JONG, syllableBoxes } from '../js/hangul.js';
 
 const [src, outDir] = process.argv.slice(2);
 const DEG = Math.PI / 180;
-const ANCHOR_MIN = 40;       // 첫 자모(초성) 후보 최소 점수
-const PART_MIN = 0.12;       // 자리 맞춤 최소 점수
+const ANCHOR_MIN = 25;       // 첫 자모(초성) 후보 최소 점수
+const PART_MIN = 0.1;       // 자리 맞춤 최소 점수
 const TOP_SYL = 3, TOP_JAMO = 20;
 const LOOP = new Set(['ㅇ', 'ㅎ']);
 
@@ -51,7 +51,7 @@ function synth(baseJ, newJ) {
   const bars = C.filter(c => c.j === 'ㅡ');
   if (!bars.length) return 0;
   let made = 0;
-  for (const c of C.filter(x => x.j === baseJ && x.s >= 40)) {
+  for (const c of C.filter(x => x.j === baseJ && x.s >= 30)) {
     const ca = Math.cos(-c.r), sa = Math.sin(-c.r), kx = 111320 * Math.cos(c.lat * DEG);
     let bestT = null;
     for (const T of near(c, Math.max(c.w, c.h) * 1.5 + 20)) {
@@ -60,9 +60,9 @@ function synth(baseJ, newJ) {
       const u = dx * ca - dy * sa, y = -(dx * sa + dy * ca);
       const top = -c.h / 2;
       if (y > top + 0.1 * c.h || y < top - 0.7 * c.h) continue;   // 바로 위에
-      if (Math.abs(u) > 0.3 * c.w) continue;                     // 가운데 정렬
-      const wr = T.w / c.w; if (wr < 0.6 || wr > 1.9) continue;   // 폭 비슷
-      const f = (1 - Math.abs(u) / (0.3 * c.w)) * (1 - Math.abs(y - (top - 0.25 * c.h)) / (0.6 * c.h));
+      if (Math.abs(u) > 0.45 * c.w) continue;                    // 가운데 정렬
+      const wr = T.w / c.w; if (wr < 0.45 || wr > 2.5) continue;  // 폭 비슷
+      const f = (1 - Math.abs(u) / (0.45 * c.w)) * (1 - Math.abs(y - (top - 0.25 * c.h)) / (0.6 * c.h));
       if (!bestT || f > bestT.f) bestT = { T, f, u, y };
     }
     if (!bestT) continue;
@@ -212,7 +212,6 @@ for (const c of [...C].sort((a, b) => b.s - a.s)) {
 const need = new Set();
 for (const [code, L] of cluster) if (best.has(code)) cluster.delete(code); // 통째로 찾은 음절은 조합 불필요
 for (const L of best.values()) for (const r of L) for (const i of r.parts) need.add(i);
-for (const L of cluster.values()) for (const r of L) for (const i of r.parts) need.add(i);
 for (const L of jamoTop.values()) for (const c of L) need.add(c.i);
 for (const i of [...need]) if (SUB.has(i)) for (const k of SUB.get(i)) need.add(k);
 const geom = new Map();
@@ -236,7 +235,7 @@ for (const [code, L] of best) {
   shards[Math.floor(code / 588)][String.fromCharCode(0xAC00 + code)] =
     L.map(r => ({ s: r.score, lat: r.lat, lon: r.lon, r: r.r, size: r.size, parts: r.parts.map(i => geom.get(i)) }));
 }
-for (const [code, L] of cluster) {
+for (const [code, L] of (process.env.CLUSTER ? cluster : new Map())) {
   shards[Math.floor(code / 588)][String.fromCharCode(0xAC00 + code)] =
     L.map(r => ({ k: 'c', s: r.score, lat: r.lat, lon: r.lon, r: r.r, size: r.size, parts: r.parts.map(i => geom.get(i)) }));
 }

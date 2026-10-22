@@ -37,9 +37,12 @@ python3 -m http.server 8000
 ```bash
 pip install osmium
 # https://download.geofabrik.de/asia/south-korea.html 에서 south-korea-latest.osm.pbf 받기
-python3 scripts/extract.py south-korea-latest.osm.pbf work/ways.bin      # 도로만 추출 (약 1분)
-node scripts/scan.mjs work/ways.bin work/cands.jsonl                       # 4km 격자 5,900여 칸 자모 후보 (2코어 약 40분)
-node --max-old-space-size=5000 scripts/compose.mjs work/cands.jsonl data   # 음절 조합 → data/ (약 7분)
+python3 scripts/extract.py south-korea-latest.osm.pbf work/ways.bin              # 차도만 (약 1분)
+python3 scripts/extract.py south-korea-latest.osm.pbf work/ways_foot.bin --foot  # 보행로·산책로·단지 길 포함
+node scripts/scan.mjs work/ways.bin work/cands.jsonl                # 4km 격자 5,900여 칸 자모 후보 (2코어 약 40분)
+node scripts/scan.mjs work/ways_foot.bin work/cands_foot.jsonl      # (약 45분)
+cat work/cands.jsonl work/cands_foot.jsonl > work/cands_all.jsonl
+node --max-old-space-size=6000 scripts/compose.mjs work/cands_all.jsonl data   # 음절 조합 → data/ (약 25분)
 ```
 
 - `scan.mjs`: 칸마다 모든 자모 템플릿을 돌려 후보(점수·방향·크기·모양)를 저장
@@ -48,7 +51,6 @@ node --max-old-space-size=5000 scripts/compose.mjs work/cands.jsonl data   # 음
 ## 다음 단계
 
 - 장소 이름(동네 이름) 표시
-- 보행로까지 포함한 전국 데이터
 - ㅎ 전용 템플릿, 결과 공유 링크 이미지
 
 도로 데이터 © OpenStreetMap contributors (ODbL)

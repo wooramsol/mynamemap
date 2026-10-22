@@ -14,8 +14,15 @@ const ang = v => Math.atan2(v[1], v[0]);
 function other(G, e, nid) { return e.u === nid ? e.v : e.u; }
 function vecBetween(G, a, b) { const A = G.nodes.get(a), B = G.nodes.get(b); return [B.x - A.x, B.y - A.y]; }
 
-// 시작 노드에서 거의 곧게 이어지는 경로들을 모두 나열
+// 시작 노드에서 거의 곧게 이어지는 경로들을 모두 나열 (노드별로 한 번만 계산해 재사용)
 function straightWalks(G, start, maxLen) {
+  if (!G._walks) G._walks = new Map();
+  let all = G._walks.get(start);
+  if (!all) { all = computeWalks(G, start, MAX_SIZE * 1.3); G._walks.set(start, all); }
+  return maxLen >= MAX_SIZE * 1.3 ? all : all.filter(w => w.len <= maxLen);
+}
+
+function computeWalks(G, start, maxLen) {
   const out = [];
   const S = G.nodes.get(start);
   for (const eid of S.edges) {

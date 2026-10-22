@@ -39,3 +39,29 @@ export function neededJamo(syllables) {
   for (const s of syllables) { add(s.single); add(s.cho); add(s.jung); add(s.jong); }
   return set;
 }
+
+// 음절 안에서 자모 자리 나누기 (100×100 상자)
+export function syllableBoxes(s) {
+  if (s.single) return [[s.single, [5, 5, 90, 90]]];
+  const v = s.jung, jong = s.jong;
+  const out = [];
+  const put = (j, box) => {
+    const parts = basic(j);
+    if (parts.length === 1) return out.push([j, box]);
+    const [x, y, w, h] = box;
+    parts.forEach((p, i) => out.push([p, [x + i * w / parts.length, y, w / parts.length, h]])); // 쌍자음·겹받침은 나란히
+  };
+  if (VERTICAL_VOWELS.has(v)) {
+    const H = jong ? 60 : 100;
+    put(s.cho, [0, 0, 56, H]); put(v, [56, 0, 44, H]);
+  } else if (HORIZONTAL_VOWELS.has(v)) {
+    if (jong) { put(s.cho, [15, 0, 70, 38]); put(v, [0, 38, 100, 26]); }
+    else { put(s.cho, [10, 0, 80, 55]); put(v, [0, 55, 100, 45]); }
+  } else { // ㅘ ㅝ ㅢ 같은 섞인 모음
+    const H = jong ? 72 : 100;
+    const [h, vv] = basic(v);
+    put(s.cho, [0, 0, 60, H * .5]); put(h, [0, H * .5, 66, H * .5]); put(vv, [66, 0, 34, H]);
+  }
+  if (jong) put(jong, [10, 64, 80, 36]);
+  return out;
+}

@@ -115,7 +115,8 @@ function scanTile(ways, list, a, b) {
 }
 
 export { readWays, bucket, tileElements, scanTile };
-if (isMainThread && !process.env.NOMAIN) {
+const IS_MAIN_SCRIPT = process.argv[1] && import.meta.url.endsWith('/' + process.argv[1].split('/').pop());
+if (isMainThread && IS_MAIN_SCRIPT && !process.env.NOMAIN) {
   const [src, dst, nw] = process.argv.slice(2);
   const workers = +(nw || os.cpus().length);
   console.time('read');
@@ -131,7 +132,7 @@ if (isMainThread && !process.env.NOMAIN) {
   const pool = [];
   // 워커에게 ways 전체를 넘기는 대신 파일 경로를 넘겨 각자 읽게 함
   for (let i = 0; i < workers; i++) {
-    const wk = new Worker(new URL(import.meta.url), { workerData: { src } });
+    const wk = new Worker(new URL(import.meta.url), { workerData: { src, kind: 'scan' } });
     const feed = () => {
       if (next >= tiles.length) { wk.postMessage(null); return; }
       const [k, list] = tiles[next++];
@@ -147,7 +148,7 @@ if (isMainThread && !process.env.NOMAIN) {
     wk.on('exit', () => { pool.splice(pool.indexOf(wk), 1); if (!pool.length) { out.end(); console.log('done', done, total, ((Date.now() - t0) / 1000).toFixed(0) + 's'); } });
     pool.push(wk);
   }
-} else if (!isMainThread) {
+} else if (!isMainThread && workerData?.kind === 'scan') {
   const ways = readWays(workerData.src);
   parentPort.on('message', msg => {
     if (!msg) return process.exit(0);

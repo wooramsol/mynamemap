@@ -3,6 +3,7 @@ import { buildGraph } from './graph.js';
 import { findJamo } from './matcher.js';
 import { SUPPORTED } from './templates.js';
 import { findSyllable } from './syllable.js';
+import { buildSyllableTemplates, matchGlyphs } from './glyph.js';
 
 const COLORS = ['#e23b2e', '#2b6cdf', '#16a06a', '#d8860b', '#8a3fd1', '#d63384', '#0f8b9c', '#6b6b00', '#b5531b', '#3a4a8c'];
 // 여러 Overpass 서버에 동시에 요청해서 가장 먼저 오는 응답을 사용
@@ -13,7 +14,8 @@ const OVERPASS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const MAX_AREA_KM2 = 10;
-const MIN_SYL = 20; // 이보다 낮으면 글자로 읽히지 않아 보여주지 않음
+const MIN_SYL = 20;   // 자모 조합 점수: 이보다 낮으면 글자로 읽히지 않아 보여주지 않음
+const MIN_GLYPH = 38; // 음절 모양 비교 점수 기준 (이보다 낮으면 지저분함)
 const DEG = Math.PI / 180;
 
 const $ = id => document.getElementById(id);
@@ -120,12 +122,32 @@ async function runLocal(name) {
     const ms = SUPPORTED.has(j) ? findJamo(G, j, { limit: 80, timeBudgetMs: 5000, minScore: 25 }) : [];
     for (const m of ms) cands.push(describe(G, m, j));
   }
-  setStatus('자모가 한 음절로 붙어 있는 곳을 찾는 중…');
+  setStatus('길 묶음이 이름 글자 모양인 곳을 찾는 중…');
   await tick();
+  // 음절 전체 모양 비교 (js/glyph.js)
+  const segs = [];
+  for (const e of G.edges) for (let i = 1; i < e.pts.length; i++) segs.push([e.pts[i - 1], e.pts[i]]);
+  const T = buildSyllableTemplates(new Set(syllables.map(s => s.char)));
+  const glyphs = matchGlyphs(segs, G.proj, cands.filter(c => c.s >= 30), T, { keep: 3, minScore: MIN_GLYPH });
   return syllables.map(s => {
-    const found = s.single ? [] : findSyllable(cands, s).filter(c => c.s >= MIN_SYL);
+    if (s.single) return { char: s.char, syl: s, kind: 'missing' };
+    const a = findSyllable(cands, s).filter(c => c.s >= MIN_SYL);
+    const b = (glyphs.get(s.char) || []).map(glyphToCand(s.char));
+    const found = mergeCands([...a, ...b]);
     return found.length ? { char: s.char, syl: s, kind: 'syllable', cands: found, sel: 0 } : { char: s.char, syl: s, kind: 'missing' };
   });
+}
+
+// 음절 모양 비교 결과 → 화면용 후보 (조각 하나 = 음절 전체)
+const glyphToCand = ch => r => ({ s: r.s, lat: r.lat, lon: r.lon, r: r.r, size: r.size, parts: [{ j: ch, s: r.s, r: r.r, lat: r.lat, lon: r.lon, g: r.g }] });
+// 같은 곳(300m 안)은 하나만, 점수순 상위 3개
+function mergeCands(list) {
+  const out = [];
+  for (const c of list.sort((a, b) => b.s - a.s)) {
+    if (out.some(o => Math.hypot((o.lat - c.lat) * 110540, (o.lon - c.lon) * 88000) < 300)) continue;
+    out.push(c); if (out.length >= 3) break;
+  }
+  return out;
 }
 
 // 매칭 결과 → 글자 방향으로 세운 상자 크기·중심 (scan.mjs와 같은 방식)

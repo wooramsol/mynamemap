@@ -7,7 +7,7 @@ import { CHO, JUNG, JONG, syllableBoxes } from './hangul.js';
 import { TEMPLATES } from './templates.js';
 
 const GRID = 30, LO = -10, HI = 110, CELL = (HI - LO) / GRID; // 음절 좌표(0~100) 기준 격자
-const SCALES = [0.85, 1, 1.18];
+const SCALES = [0.82, 0.87, 0.92, 0.96, 1, 1.04, 1.09, 1.14, 1.2]; // 격자 반올림에 덜 민감하도록 촘촘히
 export const ANCHOR_SKIP = new Set(['ㅡ', 'ㅣ']);
 export const CONSONANTS = new Set(['ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']);
 

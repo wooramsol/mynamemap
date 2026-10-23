@@ -15,7 +15,7 @@ const OVERPASS = [
 ];
 const MAX_AREA_KM2 = 10;
 const MIN_SYL = 20;   // 자모 조합 점수: 이보다 낮으면 글자로 읽히지 않아 보여주지 않음
-const MIN_GLYPH = 38; // 음절 모양 비교 점수 기준 (이보다 낮으면 지저분함)
+const MIN_GLYPH = 42; // 음절 모양 비교 점수 기준 (이보다 낮으면 지저분함)
 const DEG = Math.PI / 180;
 
 const $ = id => document.getElementById(id);

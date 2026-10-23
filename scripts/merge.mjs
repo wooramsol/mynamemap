@@ -1,12 +1,12 @@
 // 두 방식의 전국 결과를 합쳐 사이트용 data/ 만들기
 //  - compose.mjs: 자모 후보가 음절 배치로 붙어 있는 곳 (점수 20 이상)
-//  - glyph.mjs  : 길 묶음 전체가 음절 글꼴 모양과 겹치는 곳 (점수 38 이상)
+//  - glyph.mjs  : 길 묶음 전체가 음절 글꼴 모양과 겹치는 곳 (점수 42 이상)
 // 사용: node scripts/merge.mjs <compose 결과 폴더> work/glyph.jsonl data
 import fs from 'node:fs';
 import readline from 'node:readline';
 
 const [composeDir, glyphFile, outDir] = process.argv.slice(2);
-const MIN_COMPOSE = 20, MIN_GLYPH = 38, TOP = 3; // 모양 비교는 38점 아래부터 지저분해서 제외
+const MIN_COMPOSE = 20, MIN_GLYPH = 42, TOP = 3; // 모양 비교는 42점 아래부터 지저분한 경우가 많아 제외
 
 const all = new Map(); // 음절 -> 후보들
 const add = (ch, c) => { if (!all.has(ch)) all.set(ch, []); all.get(ch).push(c); };

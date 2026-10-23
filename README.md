@@ -7,7 +7,14 @@
 - **전국**: 전국 도로를 미리 분석해 둔 결과(`data/`)에서 음절을 찾습니다.
 - **지금 보는 지역**: 지도 범위의 도로를 실시간으로 불러와 찾습니다.
 
-두 모드 모두 **자모가 실제로 한 글자 배치로 붙어 있는 곳만** 결과로 보여줍니다
+두 모드 모두 **길 묶음이 실제로 한 글자로 읽히는 곳만** 결과로 보여줍니다. 찾는 방법은 두 가지입니다.
+
+1. **자모 조합** (`js/syllable.js`, `scripts/compose.mjs`): 자모 후보들이 음절 배치대로 붙어 있는 곳
+2. **음절 모양 비교** (`js/glyph.js`, `scripts/glyph.mjs`): 자모 하나를 기준으로 음절 틀을 잡고,
+   틀 안의 길 전체를 음절 글꼴 뼈대와 30×30 격자에서 겹쳐 봄. 자모마다 획 위에 길이 있어야 하고,
+   글자 밖 길이나 획 옆에 겹겹이 있는 길이 많으면 감점. 자모가 깔끔하게 따로 잡히지 않아도 전체가 그 글자로 읽히면 찾음
+
+
 (예: ㄹ·ㅏ·ㅁ이 '람' 모양으로 한 곳에 모여 있는 길). 자모를 여기저기서 따로 찾아
 이어 붙이지 않으며, 못 찾은 글자는 회색으로 표시합니다. 카드에는 길의 실제 배치를 그대로 그립니다.
 
@@ -42,7 +49,9 @@ python3 scripts/extract.py south-korea-latest.osm.pbf work/ways_foot.bin --foot 
 node scripts/scan.mjs work/ways.bin work/cands.jsonl                # 4km 격자 5,900여 칸 자모 후보 (2코어 약 40분)
 node scripts/scan.mjs work/ways_foot.bin work/cands_foot.jsonl      # (약 45분)
 cat work/cands.jsonl work/cands_foot.jsonl > work/cands_all.jsonl
-node --max-old-space-size=6000 scripts/compose.mjs work/cands_all.jsonl data   # 음절 조합 → data/ (약 25분)
+node --max-old-space-size=6000 scripts/compose.mjs work/cands_all.jsonl work/compose   # 자모 조합 (약 25분)
+node scripts/glyph.mjs work/ways_foot.bin work/cands_all.jsonl work/glyph.jsonl         # 음절 모양 비교, KS X 1001 2,350자 (약 35분)
+node scripts/merge.mjs work/compose work/glyph.jsonl data                                # 합쳐서 data/
 ```
 
 - `scan.mjs`: 칸마다 모든 자모 템플릿을 돌려 후보(점수·방향·크기·모양)를 저장

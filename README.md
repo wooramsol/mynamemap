@@ -13,6 +13,9 @@
 2. **음절 모양 비교** (`js/glyph.js`, `scripts/glyph.mjs`): 자모 하나를 기준으로 음절 틀을 잡고,
    틀 안의 길 전체를 음절 글꼴 뼈대와 30×30 격자에서 겹쳐 봄. 자모마다 획 위에 길이 있어야 하고,
    글자 밖 길이나 획 옆에 겹겹이 있는 길이 많으면 감점. 자모가 깔끔하게 따로 잡히지 않아도 전체가 그 글자로 읽히면 찾음
+   - 획(선분) 하나하나에 길이 있어야 함 (가로줄 셋 '≡'을 '드'로 읽지 않도록)
+   - 글씨체 변형: ㅈ·ㅊ(가로획+ㅅ / 손글씨형), ㅎ(꼭지 있음/없음)
+   - 전국 데이터는 **길 + 건물**을 함께 씀: 길쭉한 아파트 동은 가운데 선(ㅡ·ㅣ 획), ㄱ·ㄷ자 건물은 뼈대, 둥근 건물은 ㅇ
 
 자모를 여기저기서 따로 찾아 이어 붙이지 않으며, 못 찾은 글자는 회색으로 표시합니다. 카드에는 길의 실제 배치를 그대로 그립니다.
 
@@ -48,8 +51,12 @@ node scripts/scan.mjs work/ways.bin work/cands.jsonl                # 4km 격자
 node scripts/scan.mjs work/ways_foot.bin work/cands_foot.jsonl      # (약 45분)
 cat work/cands.jsonl work/cands_foot.jsonl > work/cands_all.jsonl
 node --max-old-space-size=6000 scripts/compose.mjs work/cands_all.jsonl work/compose   # 자모 조합 (약 25분)
-node scripts/glyph.mjs work/ways_foot.bin work/cands_all.jsonl work/glyph.jsonl         # 음절 모양 비교, KS X 1001 2,350자 (약 35분)
-node scripts/merge.mjs work/compose work/glyph.jsonl data                                # 합쳐서 data/
+python3 scripts/extract_buildings.py south-korea-latest.osm.pbf work/ways_bld.bin  # 건물 → 획 (약 5분, shapely·scikit-image 필요)
+node scripts/scan.mjs work/ways_bld.bin work/cands_bld.jsonl                          # 건물 획의 자모 후보 (약 1분)
+# 길+건물 합치기: ways_foot.bin과 ways_bld.bin의 길 수를 더해 헤더로 쓰고 본문을 이어 붙임 → work/ways_combo.bin
+cat work/cands_all.jsonl work/cands_bld.jsonl > work/cands_combo.jsonl
+node scripts/glyph.mjs work/ways_combo.bin work/cands_combo.jsonl work/glyph.jsonl       # 음절 모양 비교, KS X 1001 2,350자 (2코어 약 2시간)
+node scripts/merge.mjs work/compose work/glyph.jsonl:38 data                              # 합쳐서 data/
 ```
 
 - `scan.mjs`: 칸마다 모든 자모 템플릿을 돌려 후보(점수·방향·크기·모양)를 저장

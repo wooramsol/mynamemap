@@ -13,23 +13,29 @@ export const CONSONANTS = new Set(['ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', '�
 
 // ── 글꼴 뼈대 ───────────────────────────────────────────────
 const PAD = 0.12; // 자모 자리 안쪽 여백 (글꼴처럼 자모끼리 붙지 않게)
+// 글씨체 변형 수 (ㅈ·ㅊ: 가로획+ㅅ / 손글씨 'ㄱ자 사선+다리', ㅎ: 꼭지 있음 / 없음)
+const VARIANTS = { 'ㅈ': 2, 'ㅊ': 2, 'ㅎ': 2 };
 // 자모 획을 자리 안쪽(여백 제외)에 꽉 차게 놓고, 선 하나짜리(ㅣ,ㅡ)는 가운데로
-function jamoStrokes(j) {
-  const raw = rawStrokes(j);
+// 반환: 획 목록. 획 하나 = 선분 묶음 (동그라미는 선분 16개가 한 획)
+function jamoStrokes(j, v = 0) {
+  const raw = rawStrokes(j, v);
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-  for (const seg of raw) for (const [x, y] of seg) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-  const fx = v => x1 - x0 < 1e-6 ? 0.5 : PAD + (v - x0) / (x1 - x0) * (1 - 2 * PAD);
-  const fy = v => y1 - y0 < 1e-6 ? 0.5 : PAD + (v - y0) / (y1 - y0) * (1 - 2 * PAD);
-  return raw.map(seg => seg.map(([x, y]) => [fx(x), fy(y)]));
+  for (const g of raw) for (const seg of g) for (const [x, y] of seg) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const fx = t => x1 - x0 < 1e-6 ? 0.5 : PAD + (t - x0) / (x1 - x0) * (1 - 2 * PAD);
+  const fy = t => y1 - y0 < 1e-6 ? 0.5 : PAD + (t - y0) / (y1 - y0) * (1 - 2 * PAD);
+  return raw.map(g => g.map(seg => seg.map(([x, y]) => [fx(x), fy(y)])));
 }
-function rawStrokes(j) {
-  // 단위 상자(0~1) 안의 선분 목록
-  if (j === 'ㅇ') return ellipse(0.5, 0.5, 0.45, 0.45);
-  if (j === 'ㅎ') return [[[0.5, 0], [0.5, 0.14]], [[0.12, 0.16], [0.88, 0.16]], ...ellipse(0.5, 0.62, 0.32, 0.32)];
+function rawStrokes(j, v = 0) {
+  // 단위 상자(0~1) 안의 획 목록
+  if (j === 'ㅇ') return [ellipse(0.5, 0.5, 0.45, 0.45)];
+  if (j === 'ㅎ') {
+    const body = [[[[0.12, 0.16], [0.88, 0.16]]], ellipse(0.5, 0.62, 0.32, 0.32)];
+    return v === 0 ? [[[[0.5, 0], [0.5, 0.14]]], ...body] : body;
+  }
   let t = TEMPLATES[j];
-  if (Array.isArray(t)) t = t[0];
+  if (Array.isArray(t)) t = t[Math.min(v, t.length - 1)];
   if (!t || !t.edges) return [];
-  return t.edges.map(([a, b]) => [t.nodes[a], t.nodes[b]]);
+  return t.edges.map(([a, b]) => [[t.nodes[a], t.nodes[b]]]);
 }
 function ellipse(cx, cy, rx, ry) {
   const out = [];
@@ -70,7 +76,7 @@ function distanceTransform(occ) {
 
 // 음절마다: 자모별 획 점(격자 칸), 뼈대 거리 지도
 /** @param only 이 음절들만 (Set, 없으면 전부) */
-export function buildSyllableTemplates(only) {
+export function buildSyllableTemplates(only, skip = ANCHOR_SKIP) {
   // 기준 자모는 음절의 어느 자리든 될 수 있다 (예: '정'은 받침 ㅇ이나 ㅓ로도 찾음). 단 ㅡ·ㅣ는 너무 흔해서 제외
   const groups = new Map(); // `${기준 자모}|${자리}` -> {slot, list:[{char, parts:[cells[]], tdt}]}
   for (let code = 0; code < 11172; code++) {
@@ -79,24 +85,36 @@ export function buildSyllableTemplates(only) {
     const s = { char, cho: CHO[Math.floor(code / 588)], jung: JUNG[Math.floor((code % 588) / 28)], jong: JONG[code % 28] };
     const boxes = syllableBoxes(s);
     const occ = new Uint8Array(GRID * GRID);
-    const parts = boxes.map(([j, [x, y, w, h]]) => {
-      const segs = jamoStrokes(j).map(seg => seg.map(([u, v]) => [x + u * w, y + v * h]));
-      const cells = [];
-      for (const [px, py] of samplePoints(segs, 1.5)) {
-        const cx = cellOf(px), cy = cellOf(py);
-        if (cx < 0 || cy < 0 || cx >= GRID || cy >= GRID) continue;
-        cells.push(cy * GRID + cx); occ[cy * GRID + cx] = 1;
+    // 획(선분) 단위로 칸을 모은다: 획 하나라도 길이 없으면 그 글자가 아님 (예: 가로줄 셋 '≡'은 'ㄷ+ㅡ'가 아님)
+    // 글씨체 변형 조합마다 따로 비교 (예: '정'의 ㅈ을 두 가지 모양으로)
+    let combos = [[]];
+    for (const [j] of boxes) combos = combos.flatMap(c => Array.from({ length: VARIANTS[j] || 1 }, (_, v) => [...c, v]));
+    for (const combo of combos) {
+    const occ = new Uint8Array(GRID * GRID);
+    // 획 단위로 칸을 모은다: 획 하나라도 길이 없으면 그 글자가 아님 (예: 가로줄 셋 '≡'은 'ㄷ+ㅡ'가 아님)
+    const parts = [];
+    boxes.forEach(([j, [x, y, w, h]], pi) => {
+      for (const g of jamoStrokes(j, combo[pi])) {
+        const segs = g.map(seg => seg.map(([u, v]) => [x + u * w, y + v * h]));
+        const cells = [];
+        for (const [px, py] of samplePoints(segs, 1.5)) {
+          const cx = cellOf(px), cy = cellOf(py);
+          if (cx < 0 || cy < 0 || cx >= GRID || cy >= GRID) continue;
+          cells.push(cy * GRID + cx); occ[cy * GRID + cx] = 1;
+        }
+        const u = Int16Array.from(new Set(cells));
+        if (u.length) parts.push(u);
       }
-      return Int16Array.from(new Set(cells));
     });
     const rec = { char, parts, tdt: distanceTransform(occ), tcount: occ.reduce((a, b) => a + b, 0) };
     const seen = new Set();
     for (const [j, slot] of boxes) {
-      if (ANCHOR_SKIP.has(j)) continue;
+      if (skip.has(j)) continue;
       const key = `${j}|${slot.join(',')}`;
       if (seen.has(key)) continue; seen.add(key);
       if (!groups.has(key)) groups.set(key, { slot, list: [] });
       groups.get(key).list.push(rec);
+    }
     }
   }
   const byJamo = new Map();
@@ -116,7 +134,7 @@ export function buildSyllableTemplates(only) {
  * @param T buildSyllableTemplates 결과
  * @returns Map 음절 -> 상위 결과 [{s,lat,lon,r,size,g}]
  */
-export function matchGlyphs(segs, proj, anchors, T, { keep = 2, minScore = 25, minPartCov = 0.65, maxClutter = 0.3, maxInk = 2.2 } = {}) {
+export function matchGlyphs(segs, proj, anchors, T, { keep = 2, minScore = 25, minPartCov = 0.5, maxClutter = 0.3, maxInk = 2.2 } = {}) {
   const KEEP_PER_TILE = keep, MIN_SCORE = minScore;
   const SH = 25, hash = new Map();
   segs.forEach((sg, i) => {

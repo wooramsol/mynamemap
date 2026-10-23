@@ -40,7 +40,7 @@ if (isMainThread && process.argv[1]?.endsWith('glyph.mjs')) {
   let nA = 0;
   for await (const line of rl) {
     const i = line.indexOf('"j":"'); const j = line[i + 5];
-    if (ANCHOR_SKIP.has(j)) continue;
+    if (!process.env.ANCHOR_ALL && ANCHOR_SKIP.has(j)) continue;
     const o = JSON.parse(line);
     if (o.s < ANCHOR_MIN || (o.approx && o.j === 'ㅎ')) continue;
     let L = byTile.get(o.t); if (!L) byTile.set(o.t, L = []);
@@ -72,7 +72,7 @@ if (isMainThread && process.argv[1]?.endsWith('glyph.mjs')) {
   }
 } else if (!isMainThread && workerData?.kind === 'glyph') {
   const ways = readWays(workerData.src);
-  const T = buildSyllableTemplates(process.env.ONLY ? new Set([...process.env.ONLY]) : KSX);
+  const T = buildSyllableTemplates(process.env.ONLY ? new Set([...process.env.ONLY]) : KSX, process.env.ANCHOR_ALL ? new Set() : undefined);
   parentPort.on('message', m => {
     if (!m) return process.exit(0);
     const [a, b] = m.k.split('_').map(Number);

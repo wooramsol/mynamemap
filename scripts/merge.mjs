@@ -1,7 +1,7 @@
 // 두 방식의 전국 결과를 합쳐 사이트용 data/ 만들기
 //  - compose.mjs: 자모 후보가 음절 배치로 붙어 있는 곳 (점수 20 이상)
 //  - glyph.mjs  : 길 묶음 전체가 음절 글꼴 모양과 겹치는 곳 (점수 42 이상)
-// 사용: node scripts/merge.mjs <compose 결과 폴더> work/glyph.jsonl data
+// 사용: node scripts/merge.mjs <compose 결과 폴더> work/glyph.jsonl[:최소점수][,다른파일:점수] data
 import fs from 'node:fs';
 import readline from 'node:readline';
 
@@ -17,11 +17,15 @@ for (let i = 0; i < 19; i++) {
     for (const c of L) if (c.k !== 'c' && c.s >= MIN_COMPOSE) add(ch, { ...c, m: 'j' });
 }
 let g = 0;
-for await (const line of readline.createInterface({ input: fs.createReadStream(glyphFile) })) {
+for (const spec of glyphFile.split(',')) {
+const [gf, gmin] = spec.split(':');
+const minG = gmin ? +gmin : MIN_GLYPH;
+for await (const line of readline.createInterface({ input: fs.createReadStream(gf) })) {
   const o = JSON.parse(line);
-  if (o.s < MIN_GLYPH) continue;
+  if (o.s < minG) continue;
   g++;
   add(o.c, { s: o.s, lat: o.lat, lon: o.lon, r: o.r, size: o.size, m: 'g', parts: [{ j: o.c, s: o.s, r: o.r, lat: o.lat, lon: o.lon, g: o.g }] });
+}
 }
 
 const shards = Array.from({ length: 19 }, () => ({}));

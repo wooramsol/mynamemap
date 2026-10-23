@@ -79,9 +79,9 @@ async function fetchRoads(b, foot) {
     'elevator', 'corridor', 'steps', 'bus_stop', 'raceway', 'rest_area', 'services'];
   if (!foot) excl.push('footway', 'path', 'cycleway', 'bridleway', 'track', 'pedestrian');
   const bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(6)).join(',');
-  const q = `[out:json][timeout:60];way["highway"]["highway"!~"^(${excl.join('|')})$"]["area"!="yes"]["footway"!~"^(sidewalk|crossing)$"](${bbox});(._;>;);out skel qt;`;
+  const q = `[out:json][timeout:120];way["highway"]["highway"!~"^(${excl.join('|')})$"]["area"!="yes"]["footway"!~"^(sidewalk|crossing)$"](${bbox});(._;>;);out skel qt;`;
   const ctrls = OVERPASS.map(() => new AbortController());
-  const timer = setTimeout(() => ctrls.forEach(c => c.abort()), 60000);
+  const timer = setTimeout(() => ctrls.forEach(c => c.abort()), 150000); // 붐빌 때는 1~2분 걸리기도 함
   try {
     return await Promise.any(OVERPASS.map(async (url, i) => {
       const res = await fetch(url, {
@@ -110,7 +110,7 @@ async function runLocal(name) {
   const syllables = decompose(name);
   const b = map.getBounds();
   if (areaKm2(b) > MAX_AREA_KM2) throw new Error(`범위가 너무 넓어요 (${areaKm2(b).toFixed(1)}km²). 지도를 조금 더 확대해 주세요.`);
-  setStatus('길 데이터를 불러오는 중…');
+  setStatus('길 데이터를 불러오는 중… (지도 서버가 붐비면 1~2분 걸릴 수 있어요)');
   const osm = await fetchRoads(b, $('foot').checked);
   const G = buildGraph(osm, [b.getCenter().lat, b.getCenter().lng]);
   const list = neededJamo(syllables);

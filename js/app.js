@@ -265,7 +265,7 @@ const ghost = (j, box) => `<text x="${box[0] + box[2] / 2}" y="${box[1] + box[3]
 function comboOf(syl) {
   const boxes = comboBoxes(syl);
   if (!boxes.every(([j]) => DEX[j])) return null;
-  return boxes.map(([j, box]) => ({ j, box, paths: upright(DEX[j][0].g, DEX[j][0].r, DEX[j][0].lat, DEX[j][0].lon) }));
+  return boxes.map(([j, box]) => ({ j, box, rec: DEX[j][0], paths: upright(DEX[j][0].g, DEX[j][0].r, DEX[j][0].lat, DEX[j][0].lon) }));
 }
 function groupsSvg(groups, [ox, oy, W, H], color, sw) {
   return groups.map(({ j, box: [bx, by, bw, bh], paths }) => {
@@ -293,6 +293,7 @@ function renderCard() {
 
 // 지도에 표시할 조각들
 function unitPieces(u) {
+  if (u.kind === 'combo') return u.combo.map(c => ({ g: c.rec.g }));
   if (u.kind !== 'syllable') return [];
   return u.cands[u.sel].parts;
 }
@@ -307,6 +308,11 @@ function renderMap() {
     const at = u.cands?.[u.sel];
     if (at) L.marker([at.lat, at.lon], { icon: L.divIcon({ className: 'syl-pin', html: `<span style="background:${color}">${u.char}</span>`, iconSize: [30, 30] }) })
       .on('click', () => focusUnit(u)).addTo(layer);
+    // 조합 글자: 자모마다 찾은 곳을 모두 표시 (글자 색 테두리, 자모 이름)
+    if (u.kind === 'combo') for (const c of u.combo) {
+      L.marker([c.rec.lat, c.rec.lon], { title: `'${u.char}'의 ${c.j}`, icon: L.divIcon({ className: 'syl-pin jamo-pin', html: `<span style="color:${color};border-color:${color}">${c.j}</span>`, iconSize: [26, 26] }) })
+        .on('click', () => map.fitBounds(L.latLngBounds(c.rec.g.flat()).pad(0.6), { maxZoom: 18 })).addTo(layer);
+    }
   });
 }
 function piecesBounds(pieces) { return L.latLngBounds(pieces.flatMap(p => p.g.flat())); }

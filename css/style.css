@@ -60,3 +60,4 @@ footer a { color: inherit; }
 .sub2 { width: 100%; margin: 8px 0 2px; }
 #dex { margin-top: 12px; width: 100%; }
 .cands > div { width: 100%; }
+.jamo-pin span { width: 26px; height: 26px; font-size: 14px; background: #fff; border: 2px solid; }

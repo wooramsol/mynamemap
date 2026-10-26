@@ -83,8 +83,23 @@ export function buildSyllableTemplates(only, skip = ANCHOR_SKIP) {
     const char = String.fromCharCode(0xAC00 + code);
     if (only && !only.has(char)) continue;
     const s = { char, cho: CHO[Math.floor(code / 588)], jung: JUNG[Math.floor((code % 588) / 28)], jong: JONG[code % 28] };
-    const boxes = syllableBoxes(s);
-    const occ = new Uint8Array(GRID * GRID);
+    addTemplate(groups, char, syllableBoxes(s), skip);
+  }
+  return groupByJamo(groups);
+}
+
+/**
+ * 자모 하나(쌍자음·겹모음 포함)를 글자 상자 전체에 크게 그린 틀
+ * @param layouts { 이름: [[구성 자모, [x,y,w,h]], ...] } (0~100 상자 안 자리)
+ */
+export function buildJamoTemplates(layouts, skip = new Set()) {
+  const groups = new Map();
+  for (const [name, boxes] of Object.entries(layouts)) addTemplate(groups, name, boxes, skip);
+  return groupByJamo(groups);
+}
+
+function addTemplate(groups, char, boxes, skip) {
+  {
     // 획(선분) 단위로 칸을 모은다: 획 하나라도 길이 없으면 그 글자가 아님 (예: 가로줄 셋 '≡'은 'ㄷ+ㅡ'가 아님)
     // 글씨체 변형 조합마다 따로 비교 (예: '정'의 ㅈ을 두 가지 모양으로)
     let combos = [[]];
@@ -117,6 +132,9 @@ export function buildSyllableTemplates(only, skip = ANCHOR_SKIP) {
     }
     }
   }
+}
+
+function groupByJamo(groups) {
   const byJamo = new Map();
   for (const [key, g] of groups) {
     const j = key.split('|')[0];

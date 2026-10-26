@@ -1,4 +1,4 @@
-import { decompose, neededJamo } from './hangul.js';
+import { decompose, neededJamo, SPLIT } from './hangul.js';
 import { buildGraph } from './graph.js';
 import { findJamo } from './matcher.js';
 import { SUPPORTED } from './templates.js';
@@ -14,19 +14,20 @@ const OVERPASS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const MAX_AREA_KM2 = 10;
-// 지역 모드 기준: 사람 눈으로 검토한 전국 결과에서, 이 점수 이상이어야 대부분 바로 읽혔음
-// (전국 데이터는 하나하나 눈으로 보고 읽히는 것만 남겼으므로 점수로 거르지 않음)
+// 지역 모드 기준: 사람 눈으로 검토한 미리 찾은 결과에서, 이 점수 이상이어야 대부분 바로 읽혔음
+// (미리 찾은 데이터는 하나하나 눈으로 보고 읽히는 것만 남겼으므로 점수로 거르지 않음)
 const MIN_SYL = 50;   // 자모 조합 점수
 const MIN_GLYPH = 70; // 음절 모양 비교 점수
 const DEG = Math.PI / 180;
 
 const $ = id => document.getElementById(id);
-const map = L.map('map', { zoomControl: true }).setView([36.4, 127.8], 7);
+const map = L.map('map', { zoomControl: true }).setView([30, 120], 3);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, className: 'base-tiles',
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 const layer = L.layerGroup().addTo(map);
+const jlayer = L.layerGroup().addTo(map); // 자모 도감에서 고른 자모
 
 const qs = new URLSearchParams(location.search);
 if (qs.get('name')) $('name').value = qs.get('name');
@@ -44,15 +45,15 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 function setMode(m) {
   mode = m;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.mode === m));
-  $('go').textContent = m === 'nation' ? '전국에서 찾기' : '이 지역에서 찾기';
+  $('go').textContent = m === 'nation' ? '전 세계에서 찾기' : '이 지역에서 찾기';
   $('foot-wrap').hidden = m === 'nation';
   setStatus(m === 'nation'
-    ? '전국 도로를 미리 분석해 둔 결과에서, 자모가 한 글자로 붙어 있는 길만 찾아요.'
+    ? '세계 곳곳의 길을 미리 분석해 둔 결과에서, 한 글자로 읽히는 길만 찾아요.'
     : '지도를 원하는 동네로 옮긴 뒤 찾기를 누르세요. (약 3km 이내 범위)');
 }
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
 
-// ── 전국 모드 ─────────────────────────────────────────────
+// ── 전 세계 모드 (미리 찾아 둔 결과) ─────────────────────────────────────────────
 const shardCache = new Map();
 async function loadJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${url} ${r.status}`); return r.json(); }
 async function shard(i) {
@@ -63,7 +64,7 @@ async function shard(i) {
 // 음절은 자모가 실제로 한 덩어리로 붙어 있는 곳만 인정한다 (따로 찾아 붙이지 않음)
 async function runNation(name) {
   const syllables = decompose(name);
-  setStatus('전국 데이터를 불러오는 중…');
+  setStatus('미리 찾아 둔 결과를 불러오는 중…');
   const out = [];
   for (const s of syllables) {
     if (s.single) { out.push({ char: s.char, syl: s, kind: 'missing' }); continue; }
@@ -175,9 +176,10 @@ async function run(ev) {
   layer.clearLayers();
   try {
     const units = mode === 'nation' ? await runNation(name) : await runLocal(name);
+    await loadDex();
     state = { units, name };
     const whole = units.filter(u => u.kind === 'syllable').length;
-    const where = mode === 'nation' ? '전국에서' : '이 지역에서';
+    const where = mode === 'nation' ? '전 세계에서' : '이 지역에서';
     setStatus(whole === units.length ? `${units.length}글자 모두 자모가 한 덩어리로 붙은 길을 ${where} 찾았어요.`
       : `${units.length}글자 중 ${whole}글자를 ${where} 찾았어요. 못 찾은 글자는 회색으로 표시했어요.` + (mode === 'nation' ? ' (지역 모드에서 다른 동네를 직접 찾아볼 수도 있어요)' : ' 지도를 옮겨 다시 찾아보세요.'));
     const c = map.getCenter();
@@ -190,6 +192,51 @@ async function run(ev) {
   } finally {
     $('go').disabled = false;
   }
+}
+
+// ── 자모 도감: 자모 하나를 크게 쓴 길 (사람 눈으로 검토한 것만) ──────────
+let DEX = {};
+let dexLoading = null;
+function loadDex() {
+  if (!dexLoading) dexLoading = loadJSON('data/jamo.json').then(d => { DEX = d; }).catch(() => {});
+  return dexLoading;
+}
+// 음절을 이루는 자모 (도감에 없는 겹받침 등은 기본 자모로 나눔)
+function jamoOf(syl) {
+  if (syl.single) return [syl.single];
+  return [syl.cho, syl.jung, syl.jong].filter(Boolean).flatMap(j => DEX[j] ? [j] : (SPLIT[j] || [j]));
+}
+function showJamo(j, rec, color, linkEl) {
+  jlayer.clearLayers();
+  L.polyline(rec.g, { color, weight: 6, opacity: .9, lineCap: 'round', dashArray: '1 9' }).addTo(jlayer);
+  L.polyline(rec.g, { color, weight: 4, opacity: .9, lineCap: 'round' }).addTo(jlayer);
+  L.marker([rec.lat, rec.lon], { icon: L.divIcon({ className: 'syl-pin', html: `<span style="background:${color}">${j}</span>`, iconSize: [30, 30] }) }).addTo(jlayer);
+  map.fitBounds(L.latLngBounds(rec.g.flat()).pad(0.6), { maxZoom: 18 });
+  if (linkEl) setWhere(linkEl, j, rec);
+}
+function setWhere(a, label, at) {
+  const inKorea = at.lat > 33 && at.lat < 38.7 && at.lon > 124.5 && at.lon < 131;
+  a.className = 'where';
+  a.href = inKorea ? `https://map.kakao.com/link/map/${encodeURIComponent(label)},${at.lat},${at.lon}` : `https://www.google.com/maps?q=${at.lat},${at.lon}&z=17&t=k`;
+  a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${placeLabel(at.lat, at.lon)} · ${inKorea ? '카카오맵' : '구글 지도'}에서 보기 ↗`;
+}
+// 자모 칩 줄 (누르면 지도에 그 길을 보여줌)
+function jamoChips(list, color) {
+  const box = document.createElement('div');
+  const row = document.createElement('div'); row.className = 'cands';
+  const a = document.createElement('a');
+  for (const j of list) {
+    const rec = DEX[j]?.[0];
+    const b = document.createElement('button');
+    b.className = 'cand' + (rec ? '' : ' off');
+    b.title = rec ? `'${j}' 모양 길 · ${placeLabel(rec.lat, rec.lon)}` : `'${j}' 모양 길은 아직 못 찾음`;
+    b.innerHTML = `<svg viewBox="0 0 40 40">${rec ? pathsSvg(upright(rec.g, rec.r, rec.lat, rec.lon), [0, 0, 40, 40], color, 2.5) : ghost(j, [0, 0, 40, 40])}</svg>${j}`;
+    if (rec) b.onclick = () => { row.querySelectorAll('.cand').forEach(x => x.classList.remove('on')); b.classList.add('on'); showJamo(j, rec, color, a); };
+    else b.disabled = true;
+    row.appendChild(b);
+  }
+  box.appendChild(row); box.appendChild(a);
+  return box;
 }
 
 // ── 그리기 ─────────────────────────────────────────────
@@ -280,8 +327,15 @@ function renderList() {
     };
     if (u.kind === 'missing') {
       const m = document.createElement('span'); m.className = 'none';
-      m.textContent = `'${u.char}' 모양으로 자모가 붙어 있는 길을 ${mode === 'nation' ? '전국에서' : '이 지역에서'} 아직 못 찾았어요.`;
+      m.textContent = `'${u.char}' 모양으로 자모가 붙어 있는 길을 ${mode === 'nation' ? '전 세계에서' : '이 지역에서'} 아직 못 찾았어요.`;
       row.appendChild(m);
+      const js = jamoOf(u.syl);
+      if (js.some(j => DEX[j])) {
+        const t = document.createElement('p'); t.className = 'none sub2';
+        t.textContent = '대신 이 글자를 이루는 자모 모양의 길이에요 (자모마다 다른 곳):';
+        row.appendChild(t);
+        row.appendChild(jamoChips(js, color));
+      }
     } else if (u.kind === 'syllable') {
       u.cands.forEach((c, k) => {
         const inner = pathsSvg(c.parts.flatMap(p => upright(p.g, c.r, c.lat, c.lon)), [0, 0, 40, 40], color, 2.5);
@@ -293,15 +347,14 @@ function renderList() {
     const at = u.cands?.[u.sel];
     if (at) {
       const a = document.createElement('a');
-      a.className = 'where'; a.href = `https://map.kakao.com/link/map/${encodeURIComponent(u.char)},${at.lat},${at.lon}`;
-      a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${placeLabel(at.lat, at.lon)} · 카카오맵에서 보기 ↗`;
+      setWhere(a, u.char, at);
       div.appendChild(a);
     }
     wrap.appendChild(div);
   });
 }
 
-function render() { renderCard(); renderMap(); renderList(); }
+function render() { jlayer.clearLayers(); renderCard(); renderMap(); renderList(); }
 
 function savePng() {
   const svg = $('card').querySelector('svg');
@@ -326,6 +379,18 @@ function savePng() {
 
 $('search').addEventListener('submit', run);
 $('save').addEventListener('click', savePng);
+// 자모 도감 전체 보기
+$('dex').addEventListener('click', async () => {
+  await loadDex();
+  const wrap = $('jamo-list'); wrap.innerHTML = '';
+  const div = document.createElement('div'); div.className = 'jamo';
+  const head = document.createElement('h3');
+  head.innerHTML = `<span class="cnt">자모 도감 · 자모 하나를 크게 쓴 모양의 길 (${Object.keys(DEX).length}개)</span>`;
+  div.appendChild(head);
+  div.appendChild(jamoChips(['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'], COLORS[0]));
+  div.appendChild(jamoChips(['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'], COLORS[1]));
+  wrap.appendChild(div);
+});
 setMode(mode);
 // 공유 링크로 들어오면 지도 크기가 잡힌 뒤 자동으로 찾기
 if (qs.get('name')) setTimeout(() => { map.invalidateSize(); run(); }, 400);

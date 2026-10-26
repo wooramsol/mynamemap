@@ -73,7 +73,8 @@ if (isMainThread && process.argv[1]?.endsWith('jamo.mjs')) {
   }
   console.log('anchors', nA, 'tiles', byTile.size);
   const ways = readWays(src, true);
-  const todo = [...bucket(ways).entries()].filter(([k]) => byTile.has(k));
+  const pick = process.env.TILES ? new Set(process.env.TILES.split(',')) : null;
+  const todo = [...bucket(ways).entries()].filter(([k]) => byTile.has(k) && (!pick || pick.has(k)));
   const out = fs.createWriteStream(dst);
   let next = 0, done = 0, live = 0; const t0 = Date.now();
   for (let i = 0; i < workers; i++) {

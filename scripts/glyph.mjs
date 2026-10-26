@@ -27,7 +27,7 @@ function processTile(ways, list, a, b, anchors, T) {
   // 선분과 공간 색인 (25m 칸)
   const segs = [];
   for (const el of osm.elements) if (el.type === 'way') for (let i = 1; i < el.nodes.length; i++) segs.push([nodes.get(el.nodes[i - 1]), nodes.get(el.nodes[i])]);
-  return [...matchGlyphs(segs, proj, anchors, T, process.env.RELAX ? { minScore: 15, minPartCov: 0.5, maxClutter: 0.45, maxInk: 3.2 } : {}).entries()];
+  return [...matchGlyphs(segs, proj, anchors, T, process.env.RELAX ? { keep: 12, minScore: 10, minPartCov: 0.4, maxClutter: 0.6, maxInk: 4 } : {}).entries()];
 }
 
 // ── 실행 ───────────────────────────────────────────────────

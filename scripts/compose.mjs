@@ -9,7 +9,7 @@ const [src, outDir] = process.argv.slice(2);
 const DEG = Math.PI / 180;
 const ANCHOR_MIN = 25;       // 첫 자모(초성) 후보 최소 점수
 const PART_MIN = 0.1;       // 자리 맞춤 최소 점수
-const TOP_SYL = 3, TOP_JAMO = 20;
+const TOP_SYL = +(process.env.TOP_SYL || 3), TOP_JAMO = 20;
 const LOOP = new Set(['ㅇ', 'ㅎ']);
 
 // ── 1. 후보 읽기 (지오메트리는 나중에 필요한 것만) ─────────────

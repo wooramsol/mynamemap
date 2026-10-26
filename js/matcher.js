@@ -139,15 +139,16 @@ function matchGraphTemplate(G, tpl, opts) {
   const T = prepare(tpl);
   const found = new Map();
   const deadline = performance.now() + (opts.timeBudgetMs ?? 4000);
-  let steps = 0;
+  let steps = 0, timedOut = false;
 
   for (const [gid, gnode] of G.nodes) {
     if (gnode.edges.length < T.deg[T.start]) continue;
-    if (performance.now() > deadline) break;
+    if (timedOut || performance.now() > deadline) break;
     const st = { map: { [T.start]: gid }, mapped: new Set([gid]), used: new Set(), interior: [], r: null, sx: null, sy: null, strokeDir: {} };
 
     const rec = k => {
-      if (++steps % 5000 === 0 && performance.now() > deadline) return;
+      if (timedOut) return;
+      if (++steps % 2000 === 0 && performance.now() > deadline) { timedOut = true; return; }  // 한 번 넘으면 끝까지 바로 빠져나옴
       if (k === T.order.length) {
         const key = [...st.used].sort((a, b) => a - b).join(',');
         if (found.has(key)) return;

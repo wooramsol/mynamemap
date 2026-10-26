@@ -35,10 +35,13 @@ if (isMainThread && process.argv[1]?.endsWith('glyph.mjs')) {
   const [src, candFile, dst, nw] = process.argv.slice(2);
   const workers = +(nw || os.cpus().length);
   // 기준점: 초성으로 쓸 수 있는 자모 후보 (같은 자리 중복 제거)
-  const byTile = new Map();
-  const rl = readline.createInterface({ input: fs.createReadStream(candFile) });
+  let byTile = new Map();
   let nA = 0;
-  for await (const line of rl) {
+  const cache = candFile + (process.env.ANCHOR_ALL ? '.anchors_all.json' : '.anchors.json');
+  if (process.env.RESUME && fs.existsSync(cache)) {  // 나눠 돌릴 때: 기준점 목록을 한 번만 만들고 다시 씀
+    byTile = new Map(JSON.parse(fs.readFileSync(cache, 'utf8')));
+    for (const L of byTile.values()) nA += L.length;
+  } else for await (const line of readline.createInterface({ input: fs.createReadStream(candFile) })) {
     const i = line.indexOf('"j":"'); const j = line[i + 5];
     if (!process.env.ANCHOR_ALL && ANCHOR_SKIP.has(j)) continue;
     const o = JSON.parse(line);
@@ -47,31 +50,39 @@ if (isMainThread && process.argv[1]?.endsWith('glyph.mjs')) {
     if (L.some(x => x.j === o.j && Math.abs(x.lat - o.lat) < 8e-5 && Math.abs(x.lon - o.lon) < 8e-5 && x.s >= o.s)) continue;
     L.push({ j: o.j, s: o.s, r: o.r, lat: o.lat, lon: o.lon, w: Math.max(o.w, 6), h: Math.max(o.h, 6) }); nA++;
   }
+  if (process.env.RESUME && !fs.existsSync(cache)) fs.writeFileSync(cache, JSON.stringify([...byTile]));
   console.log('anchors', nA, 'tiles', byTile.size);
-  const ways = readWays(src);
+  const ways = readWays(src, true);
   const tiles = [...bucket(ways).entries()].filter(([k]) => byTile.has(k)).sort((x, y) => (byTile.get(y[0]).length * y[1].length) - (byTile.get(x[0]).length * x[1].length));
   const pick = process.env.TILES ? process.env.TILES.split(',') : null;
-  const todo = pick ? tiles.filter(t => pick.includes(t[0])) : tiles;
-  const out = fs.createWriteStream(dst);
+  let todo = pick ? tiles.filter(t => pick.includes(t[0])) : tiles;
+  // RESUME=1 / BUDGET=초 : scan.mjs 와 같음
+  const doneSet = process.env.RESUME && fs.existsSync(dst + '.done') ? new Set(fs.readFileSync(dst + '.done', 'utf8').split('\n')) : null;
+  if (doneSet) todo = todo.filter(t => !doneSet.has(t[0]));
+  const out = process.env.RESUME ? { write: s => fs.appendFileSync(dst, s), end: () => {} } : fs.createWriteStream(dst);
+  const budget = +(process.env.BUDGET || 0) * 1000;
   let next = 0, done = 0, live = 0; const t0 = Date.now();
   for (let i = 0; i < workers; i++) {
-    const wk = new Worker(new URL(import.meta.url), { workerData: { src, kind: 'glyph' } }); live++;
+    const wk = new Worker(new URL(import.meta.url), { workerData: { src, kind: 'glyph', ways } }); live++;
     const feed = () => {
-      if (next >= todo.length) return wk.postMessage(null);
+      if (next >= todo.length || (budget && Date.now() - t0 > budget)) return wk.postMessage(null);
       const [k, list] = todo[next++];
       wk.postMessage({ k, list, anchors: byTile.get(k) });
     };
     wk.on('message', m => {
       if (m.ready) return feed();
-      for (const [ch, L] of m.res) for (const r of L) out.write(JSON.stringify({ c: ch, ...r }) + '\n');
+      let buf = '';
+      for (const [ch, L] of m.res) for (const r of L) buf += JSON.stringify({ c: ch, ...r }) + '\n';
+      out.write(buf);
+      if (process.env.RESUME) fs.appendFileSync(dst + '.done', m.k + '\n');
       done++;
       if (done % 100 === 0 || pick) console.log(`${done}/${todo.length} tiles ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       feed();
     });
-    wk.on('exit', () => { if (--live === 0) { out.end(); console.log('done', ((Date.now() - t0) / 1000).toFixed(0) + 's'); } });
+    wk.on('exit', () => { if (--live === 0) { out.end(); console.log('done', done, 'left', todo.length - done, ((Date.now() - t0) / 1000).toFixed(0) + 's'); } });
   }
 } else if (!isMainThread && workerData?.kind === 'glyph') {
-  const ways = readWays(workerData.src);
+  const ways = workerData.ways || readWays(workerData.src);
   const T = buildSyllableTemplates(process.env.ONLY ? new Set([...process.env.ONLY]) : KSX, process.env.ANCHOR_ALL ? new Set() : undefined);
   parentPort.on('message', m => {
     if (!m) return process.exit(0);

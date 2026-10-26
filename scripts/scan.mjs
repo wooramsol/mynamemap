@@ -13,12 +13,14 @@ const JAMO = (process.env.JAMO ? process.env.JAMO.split(',') : Object.keys(TEMPL
 const KEEP = 250, MIN_SCORE = 30, MIN_LINE = 45;
 
 // 메모리를 아끼려고 모든 길을 평평한 배열 하나에 담는다 (way i = off[i]..off[i+1])
-function readWays(file) {
+// shared=true: 워커들과 메모리를 나눠 쓰는 배열(SharedArrayBuffer)로 만듦 → 워커가 따로 읽지 않아도 됨
+function readWays(file, shared = false) {
   const buf = fs.readFileSync(file);
   let o = 0;
   const n = buf.readUInt32LE(o); o += 4;
   const total = (buf.length - 4 - 4 * n) / 16;
-  const off = new Uint32Array(n + 1), ids = new Float64Array(total), lat = new Float64Array(total), lon = new Float64Array(total);
+  const mk = (T, len) => shared ? new T(new SharedArrayBuffer(len * T.BYTES_PER_ELEMENT)) : new T(len);
+  const off = mk(Uint32Array, n + 1), ids = mk(Float64Array, total), lat = mk(Float64Array, total), lon = mk(Float64Array, total);
   let p = 0;
   for (let i = 0; i < n; i++) {
     const m = buf.readUInt32LE(o); o += 4;
@@ -99,7 +101,7 @@ function scanTile(ways, list, a, b) {
   for (const j of JAMO) {
     const tpl = TEMPLATES[j];
     const isLine = !Array.isArray(tpl) && tpl.line;
-    const ms = findJamo(G, j, { limit: KEEP * 2, timeBudgetMs: 20000, minScore: isLine ? MIN_LINE : MIN_SCORE });
+    const ms = findJamo(G, j, { limit: KEEP * 2, timeBudgetMs: +(process.env.JAMO_BUDGET || 20000), minScore: isLine ? MIN_LINE : MIN_SCORE });
     let kept = 0;
     for (const m of ms) {
       const d = describe(G, m);
@@ -120,36 +122,41 @@ if (isMainThread && IS_MAIN_SCRIPT && !process.env.NOMAIN) {
   const [src, dst, nw] = process.argv.slice(2);
   const workers = +(nw || os.cpus().length);
   console.time('read');
-  const ways = readWays(src);
+  const ways = readWays(src, true);
   console.timeEnd('read');
   let tiles = [...bucket(ways).entries()].sort((x, y) => y[1].length - x[1].length);
   if (process.env.TILES) { const want = process.env.TILES.split(','); tiles = want.map(k => want.length && tiles.find(t => t[0] === k) || tiles[+k]).filter(Boolean); }
+  // RESUME=1: 이미 끝낸 칸(dst.done)은 건너뛰고 이어 씀. BUDGET=초: 그 시간이 지나면 새 칸을 더 받지 않음
+  const doneSet = process.env.RESUME && fs.existsSync(dst + '.done') ? new Set(fs.readFileSync(dst + '.done', 'utf8').split('\n')) : null;
+  if (doneSet) tiles = tiles.filter(t => !doneSet.has(t[0]));
   console.log('ways', ways.length, 'tiles', tiles.length);
-  const out = fs.createWriteStream(dst);
+  const out = process.env.RESUME ? { write: s => fs.appendFileSync(dst, s), end: () => {} } : fs.createWriteStream(dst);
+  const budget = +(process.env.BUDGET || 0) * 1000;
   let next = 0, done = 0, total = 0;
   const t0 = Date.now();
   const sab = null;
   const pool = [];
   // 워커에게 ways 전체를 넘기는 대신 파일 경로를 넘겨 각자 읽게 함
   for (let i = 0; i < workers; i++) {
-    const wk = new Worker(new URL(import.meta.url), { workerData: { src, kind: 'scan' } });
+    const wk = new Worker(new URL(import.meta.url), { workerData: { src, kind: 'scan', ways } });
     const feed = () => {
-      if (next >= tiles.length) { wk.postMessage(null); return; }
+      if (next >= tiles.length || (budget && Date.now() - t0 > budget)) { wk.postMessage(null); return; }
       const [k, list] = tiles[next++];
       wk.postMessage({ k, list });
     };
     wk.on('message', msg => {
       if (msg.ready) return feed();
-      for (const r of msg.res) out.write(JSON.stringify({ t: msg.k, ...r }) + '\n');
+      out.write(msg.res.map(r => JSON.stringify({ t: msg.k, ...r }) + '\n').join(''));
+      if (process.env.RESUME) fs.appendFileSync(dst + '.done', msg.k + '\n');
       total += msg.res.length; done++;
       if (done % 200 === 0 || process.env.TILES) console.log(`${done}/${tiles.length} tiles, ${total} cands, ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       feed();
     });
-    wk.on('exit', () => { pool.splice(pool.indexOf(wk), 1); if (!pool.length) { out.end(); console.log('done', done, total, ((Date.now() - t0) / 1000).toFixed(0) + 's'); } });
+    wk.on('exit', () => { pool.splice(pool.indexOf(wk), 1); if (!pool.length) { out.end(); console.log('done', done, total, 'left', tiles.length - done, ((Date.now() - t0) / 1000).toFixed(0) + 's'); } });
     pool.push(wk);
   }
 } else if (!isMainThread && workerData?.kind === 'scan') {
-  const ways = readWays(workerData.src);
+  const ways = workerData.ways || readWays(workerData.src);
   parentPort.on('message', msg => {
     if (!msg) return process.exit(0);
     const [a, b] = msg.k.split('_').map(Number);

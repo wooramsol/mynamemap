@@ -14,7 +14,6 @@ import struct
 import sys
 
 import numpy as np
-import osmium
 from shapely.geometry import Polygon
 from shapely import affinity
 from skimage.draw import polygon as fill_polygon
@@ -103,78 +102,86 @@ def skeleton_lines(poly):
     return out
 
 
-class Buildings(osmium.SimpleHandler):
-    def __init__(self, out):
-        super().__init__()
-        self.out = out
-        self.count = 0
-        self.stats = {'slim': 0, 'skeleton': 0, 'round': 0, 'skip': 0}
-
-    def emit(self, lines, to_ll):
-        ids = {}
-        for L in lines:
-            if len(L) < 2:
-                continue
-            recs = []
-            for x, y in L:
-                key = (round(x, 1), round(y, 1))
-                if key not in ids:
-                    ids[key] = new_id()
-                lat, lon = to_ll(x, y)
-                recs.append((ids[key], int(round(lat * 1e7)), int(round(lon * 1e7))))
-            self.out.write(struct.pack('<I', len(recs)))
-            for r in recs:
-                self.out.write(struct.pack('<qii', *r))
-            self.count += 1
-
-    def way(self, w):
-        if 'building' not in w.tags or not w.is_closed() or len(w.nodes) < 4:
-            return
-        try:
-            ll = [(n.location.lat, n.location.lon) for n in w.nodes]
-        except osmium.InvalidLocationError:
-            return
-        lat0, lon0 = ll[0]
-        kx, ky = math.cos(math.radians(lat0)) * 111320, 110540
-        to_xy = lambda la, lo: ((lo - lon0) * kx, (la - lat0) * ky)
-        to_ll = lambda x, y: (lat0 + y / ky, lon0 + x / kx)
-        try:
-            poly = Polygon([to_xy(*p) for p in ll]).buffer(0)
-        except Exception:
-            return
-        if poly.is_empty or poly.geom_type != 'Polygon' or poly.area < MIN_AREA:
-            self.stats['skip'] += 1
-            return
-        mrr = poly.minimum_rotated_rectangle
-        c = list(mrr.exterior.coords)[:4]
-        e1, e2 = math.dist(c[0], c[1]), math.dist(c[1], c[2])
-        Lg, Sh = max(e1, e2), min(e1, e2)
-        if Lg < MIN_LEN:
-            self.stats['skip'] += 1
-            return
-        fill = poly.area / mrr.area
-        circ = 4 * math.pi * poly.area / poly.length ** 2
-        if circ > 0.85 and Lg >= 20:
-            ring = list(poly.exterior.coords)
-            self.emit([ring], to_ll); self.stats['round'] += 1
-        elif fill >= 0.8 and Lg / max(Sh, 1e-6) >= SLIM:
-            # 짧은 변의 가운데를 잇는 선
-            if e1 < e2:
-                a = ((c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2); b = ((c[2][0] + c[3][0]) / 2, (c[2][1] + c[3][1]) / 2)
-            else:
-                a = ((c[1][0] + c[2][0]) / 2, (c[1][1] + c[2][1]) / 2); b = ((c[3][0] + c[0][0]) / 2, (c[3][1] + c[0][1]) / 2)
-            self.emit([[a, b]], to_ll); self.stats['slim'] += 1
-        elif fill < 0.8 and poly.area >= 500:
-            lines = skeleton_lines(poly)
-            if lines:
-                self.emit(lines, to_ll); self.stats['skeleton'] += 1
-            else:
-                self.stats['skip'] += 1
+def polygon_to_lines(poly):
+    """미터 좌표 건물 다각형 → ('slim'|'skeleton'|'round'|'skip', 선 목록)"""
+    if poly.is_empty or poly.geom_type != 'Polygon' or poly.area < MIN_AREA:
+        return 'skip', []
+    mrr = poly.minimum_rotated_rectangle
+    c = list(mrr.exterior.coords)[:4]
+    e1, e2 = math.dist(c[0], c[1]), math.dist(c[1], c[2])
+    Lg, Sh = max(e1, e2), min(e1, e2)
+    if Lg < MIN_LEN:
+        return 'skip', []
+    fill = poly.area / mrr.area
+    circ = 4 * math.pi * poly.area / poly.length ** 2
+    if circ > 0.85 and Lg >= 20:
+        return 'round', [list(poly.exterior.coords)]
+    if fill >= 0.8 and Lg / max(Sh, 1e-6) >= SLIM:
+        # 짧은 변의 가운데를 잇는 선
+        if e1 < e2:
+            a = ((c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2); b = ((c[2][0] + c[3][0]) / 2, (c[2][1] + c[3][1]) / 2)
         else:
-            self.stats['skip'] += 1
+            a = ((c[1][0] + c[2][0]) / 2, (c[1][1] + c[2][1]) / 2); b = ((c[3][0] + c[0][0]) / 2, (c[3][1] + c[0][1]) / 2)
+        return 'slim', [[a, b]]
+    if fill < 0.8 and poly.area >= 500:
+        lines = skeleton_lines(poly)
+        return ('skeleton', lines) if lines else ('skip', [])
+    return 'skip', []
+
+
+def make_handler():
+    import osmium  # OSM 변환에서만 필요 (전자지도 변환은 osmium 없이 동작)
+
+    class Buildings(osmium.SimpleHandler):
+        def __init__(self, out):
+            super().__init__()
+            self.out = out
+            self.count = 0
+            self.stats = {'slim': 0, 'skeleton': 0, 'round': 0, 'skip': 0}
+
+        def emit(self, lines, to_ll):
+            ids = {}
+            for L in lines:
+                if len(L) < 2:
+                    continue
+                recs = []
+                for x, y in L:
+                    key = (round(x, 1), round(y, 1))
+                    if key not in ids:
+                        ids[key] = new_id()
+                    lat, lon = to_ll(x, y)
+                    recs.append((ids[key], int(round(lat * 1e7)), int(round(lon * 1e7))))
+                self.out.write(struct.pack('<I', len(recs)))
+                for r in recs:
+                    self.out.write(struct.pack('<qii', *r))
+                self.count += 1
+
+        def way(self, w):
+            if 'building' not in w.tags or not w.is_closed() or len(w.nodes) < 4:
+                return
+            try:
+                ll = [(n.location.lat, n.location.lon) for n in w.nodes]
+            except osmium.InvalidLocationError:
+                return
+            lat0, lon0 = ll[0]
+            kx, ky = math.cos(math.radians(lat0)) * 111320, 110540
+            to_xy = lambda la, lo: ((lo - lon0) * kx, (la - lat0) * ky)
+            to_ll = lambda x, y: (lat0 + y / ky, lon0 + x / kx)
+            try:
+                poly = Polygon([to_xy(*p) for p in ll]).buffer(0)
+            except Exception:
+                return
+            kind, lines = polygon_to_lines(poly)
+            self.stats[kind] += 1
+            if lines:
+                self.emit(lines, to_ll)
+
+
+    return Buildings
 
 
 def main(src, dst):
+    Buildings = make_handler()
     with open(dst, 'wb') as f:
         f.write(struct.pack('<I', 0))
         h = Buildings(f)

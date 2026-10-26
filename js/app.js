@@ -57,7 +57,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
 
 // ── 전 세계 모드 (미리 찾아 둔 결과) ─────────────────────────────────────────────
 const shardCache = new Map();
-const DATA_V = '2026-10-26c'; // 데이터를 바꿀 때마다 올림 (브라우저에 남은 옛 데이터 대신 새로 받게)
+const DATA_V = '2026-10-27a'; // 데이터를 바꿀 때마다 올림 (브라우저에 남은 옛 데이터 대신 새로 받게)
 async function loadJSON(url) { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'v=' + DATA_V); if (!r.ok) throw new Error(`${url} ${r.status}`); return r.json(); }
 async function shard(i) {
   if (!shardCache.has(i)) shardCache.set(i, loadJSON(`data/syl/${i}.json`));
@@ -195,6 +195,7 @@ async function run(ev) {
       const cb = mode === 'nation' ? comboOf(u.syl) : localComboOf(u.syl, u.jcands || []);
       if (cb) { u.kind = 'combo'; u.combo = cb; }
     }
+    if (mode === 'nation') await gatherNearby(units);
     state = { units, name };
     const whole = units.filter(u => u.kind === 'syllable').length;
     const combo = units.filter(u => u.kind === 'combo').length;
@@ -281,6 +282,46 @@ function comboOf(syl) {
   if (!boxes.every(([j]) => DEX[j])) return null;
   return boxes.map(([j, box]) => ({ j, box, rec: DEX[j][0], paths: upright(DEX[j][0].g, DEX[j][0].r, DEX[j][0].lat, DEX[j][0].lon) }));
 }
+// ── 전국: 자모들이 되도록 한곳에 모이게 고르기 ─────────────────────
+// 자모마다 전국의 또렷한 길 여러 곳(data/jp/)이 있음. 이름 전체의 자모(조합 글자)와
+// 찾은 음절들이 서로 가장 가까이 모이는 자리를 고른다.
+const poolCache = new Map();
+function jamoPool(j) {
+  if (!poolCache.has(j)) poolCache.set(j, loadJSON(`data/jp/${j.codePointAt(0).toString(16)}.json`)
+    .then(L => L.map(([lat, lon, s, r, g]) => ({ lat, lon, s, r, g })))
+    .catch(() => (DEX[j] || []).map(x => ({ lat: x.lat, lon: x.lon, s: x.s, r: x.r, g: x.g }))));
+  return poolCache.get(j);
+}
+const km = (a, b) => Math.hypot((a.lat - b.lat) * 110.54, (a.lon - b.lon) * 111.32 * Math.cos(a.lat * DEG));
+async function gatherNearby(units) {
+  const items = []; // { opts:[{lat,lon,...}], set(opt) }
+  for (const u of units) {
+    if (u.kind === 'combo') for (const c of u.combo) {
+      const opts = await jamoPool(c.j);
+      if (opts.length) items.push({ opts, set: o => { c.rec = o; c.paths = upright(o.g, o.r, o.lat, o.lon); } });
+    } else if (u.kind === 'syllable' && u.cands.length > 1) {
+      items.push({ opts: u.cands, set: o => { u.sel = u.cands.indexOf(o); } });
+    } else if (u.kind === 'syllable') {
+      items.push({ opts: u.cands, set: () => {} });
+    }
+  }
+  if (items.length < 2) return;
+  // 기준 후보: 선택지가 가장 적은 항목의 자리들 (+ 다른 항목 자리 일부)
+  const sorted = [...items].sort((a, b) => a.opts.length - b.opts.length);
+  const centers = [...sorted[0].opts, ...sorted.slice(1, 3).flatMap(it => it.opts.slice(0, 200))].slice(0, 800);
+  let best = null;
+  for (const c of centers) {
+    let cost = 0;
+    for (const it of items) { let m = Infinity; for (const o of it.opts) { const d = km(c, o); if (d < m) m = d; } cost += m; if (best && cost >= best.cost) break; }
+    if (!best || cost < best.cost) best = { c, cost };
+  }
+  for (const it of items) {
+    let pick = it.opts[0], m = Infinity;
+    for (const o of it.opts) { const d = km(best.c, o); if (d < m) { m = d; pick = o; } }
+    it.set(pick);
+  }
+}
+
 const LOCAL_JAMO_MIN = 55; // 지역 모드에서 자모 하나로 쓸 만큼 또렷한 점수
 function localComboOf(syl, cands) {
   const boxes = comboBoxes(syl), out = [];

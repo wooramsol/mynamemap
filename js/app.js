@@ -56,7 +56,8 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
 
 // ── 전 세계 모드 (미리 찾아 둔 결과) ─────────────────────────────────────────────
 const shardCache = new Map();
-async function loadJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${url} ${r.status}`); return r.json(); }
+const DATA_V = '2026-10-26c'; // 데이터를 바꿀 때마다 올림 (브라우저에 남은 옛 데이터 대신 새로 받게)
+async function loadJSON(url) { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'v=' + DATA_V); if (!r.ok) throw new Error(`${url} ${r.status}`); return r.json(); }
 async function shard(i) {
   if (!shardCache.has(i)) shardCache.set(i, loadJSON(`data/syl/${i}.json`));
   return shardCache.get(i);

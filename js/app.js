@@ -21,7 +21,7 @@ const MIN_GLYPH = 70; // 음절 모양 비교 점수
 const DEG = Math.PI / 180;
 
 const $ = id => document.getElementById(id);
-const map = L.map('map', { zoomControl: true }).setView([30, 120], 3);
+const map = L.map('map', { zoomControl: true }).setView([36.4, 127.8], 7);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, className: 'base-tiles',
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -45,10 +45,10 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 function setMode(m) {
   mode = m;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.mode === m));
-  $('go').textContent = m === 'nation' ? '전 세계에서 찾기' : '이 지역에서 찾기';
+  $('go').textContent = m === 'nation' ? '전국에서 찾기' : '이 지역에서 찾기';
   $('foot-wrap').hidden = m === 'nation';
   setStatus(m === 'nation'
-    ? '세계 곳곳의 길을 미리 분석해 둔 결과에서, 한 글자로 읽히는 길만 찾아요.'
+    ? '전국 길을 미리 분석해 둔 결과에서, 한 글자로 읽히는 길만 찾아요.'
     : '지도를 원하는 동네로 옮긴 뒤 찾기를 누르세요. (약 3km 이내 범위)');
 }
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
@@ -179,7 +179,7 @@ async function run(ev) {
     await loadDex();
     state = { units, name };
     const whole = units.filter(u => u.kind === 'syllable').length;
-    const where = mode === 'nation' ? '전 세계에서' : '이 지역에서';
+    const where = mode === 'nation' ? '전국에서' : '이 지역에서';
     setStatus(whole === units.length ? `${units.length}글자 모두 자모가 한 덩어리로 붙은 길을 ${where} 찾았어요.`
       : `${units.length}글자 중 ${whole}글자를 ${where} 찾았어요. 못 찾은 글자는 회색으로 표시했어요.` + (mode === 'nation' ? ' (지역 모드에서 다른 동네를 직접 찾아볼 수도 있어요)' : ' 지도를 옮겨 다시 찾아보세요.'));
     const c = map.getCenter();
@@ -327,7 +327,7 @@ function renderList() {
     };
     if (u.kind === 'missing') {
       const m = document.createElement('span'); m.className = 'none';
-      m.textContent = `'${u.char}' 모양으로 자모가 붙어 있는 길을 ${mode === 'nation' ? '전 세계에서' : '이 지역에서'} 아직 못 찾았어요.`;
+      m.textContent = `'${u.char}' 모양으로 자모가 붙어 있는 길을 ${mode === 'nation' ? '전국에서' : '이 지역에서'} 아직 못 찾았어요.`;
       row.appendChild(m);
       const js = jamoOf(u.syl);
       if (js.some(j => DEX[j])) {

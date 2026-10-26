@@ -25,6 +25,10 @@ function jamoStrokes(j, v = 0) {
   const fy = t => y1 - y0 < 1e-6 ? 0.5 : PAD + (t - y0) / (y1 - y0) * (1 - 2 * PAD);
   return raw.map(g => g.map(seg => seg.map(([x, y]) => [fx(x), fy(y)])));
 }
+/** 자모 j의 뼈대 선분을 상자 [x,y,w,h](0~100 좌표) 안에 놓은 것 */
+export function strokeSegs(j, [x, y, w, h], v = 0) {
+  return jamoStrokes(j, v).flat().map(seg => seg.map(([u, t]) => [x + u * w, y + t * h]));
+}
 function rawStrokes(j, v = 0) {
   // 단위 상자(0~1) 안의 획 목록
   if (j === 'ㅇ') return [ellipse(0.5, 0.5, 0.45, 0.45)];
@@ -230,10 +234,20 @@ export function matchGlyphs(segs, proj, anchors, T, { keep = 2, minScore = 25, m
           for (const i of near) {
             const [p, q] = segs[i];
             const [X0, Y0] = toXY(p[0], p[1]), [X1, Y1] = toXY(q[0], q[1]);
-            const mx = cellOf((X0 + X1) / 2), myc = cellOf((Y0 + Y1) / 2);
+            // 글자 상자(-5~105) 밖으로 길게 뻗은 길은 상자 안 부분만 남김 (통째로 버리면 획이 빠짐)
+            let t0 = 0, t1 = 1;
+            const dX = X1 - X0, dY = Y1 - Y0;
+            for (const [pp, qq] of [[-dX, X0 + 5], [dX, 105 - X0], [-dY, Y0 + 5], [dY, 105 - Y0]]) {
+              if (Math.abs(pp) < 1e-9) { if (qq < 0) { t0 = 1; t1 = 0; } continue; }
+              const t = qq / pp;
+              if (pp < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+            }
+            if (t1 - t0 < 1e-6) continue;
+            const mX = X0 + dX * (t0 + t1) / 2, mY = Y0 + dY * (t0 + t1) / 2;
+            const mx = cellOf(mX), myc = cellOf(mY);
             if (mx < 0 || myc < 0 || mx >= GRID || myc >= GRID || syl.tdt[myc * GRID + mx] > 1.5) continue;
-            if ((X0 + X1) / 2 < -5 || (X0 + X1) / 2 > 105 || (Y0 + Y1) / 2 < -5 || (Y0 + Y1) / 2 > 105) continue;
-            g.push([p, q].map(([x, y]) => proj.inv(x, y).map(v => +v.toFixed(6))));
+            const a = [p[0] + (q[0] - p[0]) * t0, p[1] + (q[1] - p[1]) * t0], b = [p[0] + (q[0] - p[0]) * t1, p[1] + (q[1] - p[1]) * t1];
+            g.push([a, b].map(([x, y]) => proj.inv(x, y).map(v => +v.toFixed(6))));
           }
           const [clat, clon] = proj.inv(wx, wy);
           const rec = { s: score, lat: +clat.toFixed(6), lon: +clon.toFixed(6), r: +A.r.toFixed(3), size: Math.round(100 / k), g };

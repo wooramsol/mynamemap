@@ -4,7 +4,7 @@
 
 ## 두 가지 모드
 
-- **전국**: 전국 도로를 미리 분석해 둔 결과(`data/`)에서 음절을 찾습니다.
+- **전국**: 전국 길·건물·철도·개천을 미리 분석하고, 후보를 **사람 눈으로 하나씩 검토해 바로 읽히는 것만** 남긴 결과(`data/`)에서 찾습니다. 자주 쓰는 2,350자(KS X 1001) 중 631자.
 - **지금 보는 지역**: 지도 범위의 도로를 실시간으로 불러와 찾습니다.
 
 두 모드 모두 **길 묶음이 실제로 한 글자로 읽히는 곳만** 결과로 보여줍니다. 찾는 방법은 두 가지입니다.
@@ -56,7 +56,13 @@ node scripts/scan.mjs work/ways_bld.bin work/cands_bld.jsonl                    
 # 길+건물 합치기: ways_foot.bin과 ways_bld.bin의 길 수를 더해 헤더로 쓰고 본문을 이어 붙임 → work/ways_combo.bin
 cat work/cands_all.jsonl work/cands_bld.jsonl > work/cands_combo.jsonl
 node scripts/glyph.mjs work/ways_combo.bin work/cands_combo.jsonl work/glyph.jsonl       # 음절 모양 비교, KS X 1001 2,350자 (2코어 약 2시간)
-node scripts/merge.mjs work/compose work/glyph.jsonl:38 data                              # 합쳐서 data/
+python3 scripts/extract_extra.py south-korea-latest.osm.pbf work/ways_extra.bin    # 철도·개천·운동장 트랙
+# (ways_extra.bin 도 scan 해서 후보에 더하고, 길+건물+기타를 합친 파일로 glyph.mjs 실행)
+TOP_SYL=8 node --max-old-space-size=6000 scripts/compose.mjs work/cands_all.jsonl work/compose8
+# 검토: 후보 모으기 → 모음 그림 → 눈으로 보고 통과 번호 적기 → data/
+python3 scripts/review/pool.py work/pool.jsonl work/glyph.jsonl:36 work/compose8:28
+node scripts/review/sheet.mjs work/pool.jsonl work/sheets           # 48칸씩 그림 (번호·글자 표시)
+python3 scripts/review/build.py data work/pool.jsonl:work/approved.txt
 ```
 
 - `scan.mjs`: 칸마다 모든 자모 템플릿을 돌려 후보(점수·방향·크기·모양)를 저장

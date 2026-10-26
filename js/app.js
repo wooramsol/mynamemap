@@ -199,10 +199,11 @@ async function run(ev) {
     const whole = units.filter(u => u.kind === 'syllable').length;
     const combo = units.filter(u => u.kind === 'combo').length;
     const where = mode === 'nation' ? '전국에서' : '이 지역에서';
+    const rest = units.length - whole - combo;
     setStatus(whole === units.length ? `${units.length}글자 모두 한 글자 모양 그대로인 길을 ${where} 찾았어요.`
-      : `${units.length}글자 중 ${whole}글자는 한 글자 모양 그대로인 길을 ${where} 찾았어요.`
-        + (combo ? ` ${combo}글자는 ${mode === 'nation' ? '' : '이 지역의 '}자모마다 다른 곳의 길을 모아 만들었어요(조합, 회갈색).` : '')
-        + (whole + combo < units.length ? ' 못 찾은 글자는 회색으로 표시했어요.' : ''));
+      : [whole ? `${whole}글자는 한 글자 모양 그대로인 길을 ${where} 찾았어요.` : `한 글자 모양 그대로인 길은 ${where} 못 찾았어요.`,
+         combo ? `${combo}글자는 ${mode === 'nation' ? '' : '이 지역의 '}자모마다 다른 곳의 길을 모아 만들었어요(조합, 회갈색).` : '',
+         rest ? `${rest}글자는 회색으로 표시했어요.` : ''].filter(Boolean).join(' '));
     const c = map.getCenter();
     history.replaceState(null, '', `?name=${encodeURIComponent(name)}` + (mode === 'local' ? `&c=${c.lat.toFixed(5)},${c.lng.toFixed(5)},${map.getZoom()}` : ''));
     render();
@@ -384,7 +385,7 @@ function renderList() {
       const js = jamoOf(u.syl);
       if (u.kind === 'missing' && js.some(j => DEX[j])) {
         const t = document.createElement('p'); t.className = 'none sub2';
-        t.textContent = u.kind === 'combo' ? '그래서 자모마다 다른 곳의 길을 모았어요:' : '이 글자를 이루는 자모 모양의 길이에요 (자모마다 다른 곳):';
+        t.textContent = mode === 'nation' ? '이 글자를 이루는 자모 모양의 길이에요 (자모마다 다른 곳):' : '전국 자모 도감에 있는 자모 모양의 길이에요 (이 지역 밖):';
         row.appendChild(t);
         row.appendChild(jamoChips(js, color));
       }

@@ -14,8 +14,10 @@ const OVERPASS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const MAX_AREA_KM2 = 10;
-const MIN_SYL = 20;   // 자모 조합 점수: 이보다 낮으면 글자로 읽히지 않아 보여주지 않음
-const MIN_GLYPH = 42; // 음절 모양 비교 점수 기준 (이보다 낮으면 지저분함)
+// 지역 모드 기준: 사람 눈으로 검토한 전국 결과에서, 이 점수 이상이어야 대부분 바로 읽혔음
+// (전국 데이터는 하나하나 눈으로 보고 읽히는 것만 남겼으므로 점수로 거르지 않음)
+const MIN_SYL = 50;   // 자모 조합 점수
+const MIN_GLYPH = 70; // 음절 모양 비교 점수
 const DEG = Math.PI / 180;
 
 const $ = id => document.getElementById(id);
@@ -67,7 +69,7 @@ async function runNation(name) {
     if (s.single) { out.push({ char: s.char, syl: s, kind: 'missing' }); continue; }
     const code = s.char.charCodeAt(0) - 0xAC00;
     const data = await shard(Math.floor(code / 588));
-    const cands = (data[s.char] || []).filter(c => c.k !== 'c' && c.s >= MIN_SYL);
+    const cands = (data[s.char] || []).filter(c => c.k !== 'c');
     out.push(cands.length ? { char: s.char, syl: s, kind: 'syllable', cands, sel: 0 } : { char: s.char, syl: s, kind: 'missing' });
   }
   return out;

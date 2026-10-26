@@ -135,12 +135,12 @@ async function runLocal(name) {
   const T = buildSyllableTemplates(new Set(syllables.map(s => s.char)));
   const glyphs = matchGlyphs(segs, G.proj, cands.filter(c => c.s >= 30), T, { keep: 3, minScore: MIN_GLYPH });
   return syllables.map(s => {
-    if (s.single) return { char: s.char, syl: s, kind: 'missing' };
+    if (s.single) return { char: s.char, syl: s, kind: 'missing', jcands: cands };
     const a = findSyllable(cands, s).filter(c => c.s >= MIN_SYL);
     const b = (glyphs.get(s.char) || []).map(glyphToCand(s.char));
     // 자음·모음이 길로 서로 붙어 있으면 한 글자로 또렷이 읽히지 않으므로 뺌
     const found = mergeCands([...a, ...b]).filter(c => jamoSeparated(c, s));
-    return found.length ? { char: s.char, syl: s, kind: 'syllable', cands: found, sel: 0 } : { char: s.char, syl: s, kind: 'missing' };
+    return found.length ? { char: s.char, syl: s, kind: 'syllable', cands: found, sel: 0 } : { char: s.char, syl: s, kind: 'missing', jcands: cands };
   });
 }
 
@@ -181,14 +181,18 @@ async function run(ev) {
     const units = mode === 'nation' ? await runNation(name) : await runLocal(name);
     await loadDex();
     // 음절을 못 찾은 글자: 자모 도감의 길로 조합 (자모마다 다른 곳)
-    for (const u of units) if (u.kind === 'missing') { const cb = comboOf(u.syl); if (cb) { u.kind = 'combo'; u.combo = cb; } }
+    // 전국: 자모 도감(전국)에서 / 지역: 지금 보는 지역에서 찾은 자모 중 또렷한 것으로
+    for (const u of units) if (u.kind === 'missing') {
+      const cb = mode === 'nation' ? comboOf(u.syl) : localComboOf(u.syl, u.jcands || []);
+      if (cb) { u.kind = 'combo'; u.combo = cb; }
+    }
     state = { units, name };
     const whole = units.filter(u => u.kind === 'syllable').length;
     const combo = units.filter(u => u.kind === 'combo').length;
     const where = mode === 'nation' ? '전국에서' : '이 지역에서';
     setStatus(whole === units.length ? `${units.length}글자 모두 한 글자 모양 그대로인 길을 ${where} 찾았어요.`
       : `${units.length}글자 중 ${whole}글자는 한 글자 모양 그대로인 길을 ${where} 찾았어요.`
-        + (combo ? ` ${combo}글자는 자모마다 다른 곳의 길을 모아 만들었어요(조합, 회갈색).` : '')
+        + (combo ? ` ${combo}글자는 ${mode === 'nation' ? '' : '이 지역의 '}자모마다 다른 곳의 길을 모아 만들었어요(조합, 회갈색).` : '')
         + (whole + combo < units.length ? ' 못 찾은 글자는 회색으로 표시했어요.' : ''));
     const c = map.getCenter();
     history.replaceState(null, '', `?name=${encodeURIComponent(name)}` + (mode === 'local' ? `&c=${c.lat.toFixed(5)},${c.lng.toFixed(5)},${map.getZoom()}` : ''));
@@ -229,12 +233,12 @@ function setWhere(a, label, at) {
   a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${placeLabel(at.lat, at.lon)} · ${inKorea ? '카카오맵' : '구글 지도'}에서 보기 ↗`;
 }
 // 자모 칩 줄 (누르면 지도에 그 길을 보여줌)
-function jamoChips(list, color) {
+function jamoChips(list, color, recs) {
   const box = document.createElement('div');
   const row = document.createElement('div'); row.className = 'cands';
   const a = document.createElement('a');
   for (const j of list) {
-    const rec = DEX[j]?.[0];
+    const rec = recs ? recs[list.indexOf(j)] : DEX[j]?.[0];
     const b = document.createElement('button');
     b.className = 'cand' + (rec ? '' : ' off');
     b.title = rec ? `'${j}' 모양 길 · ${placeLabel(rec.lat, rec.lon)}` : `'${j}' 모양 길은 아직 못 찾음`;
@@ -266,6 +270,16 @@ function comboOf(syl) {
   const boxes = comboBoxes(syl);
   if (!boxes.every(([j]) => DEX[j])) return null;
   return boxes.map(([j, box]) => ({ j, box, rec: DEX[j][0], paths: upright(DEX[j][0].g, DEX[j][0].r, DEX[j][0].lat, DEX[j][0].lon) }));
+}
+const LOCAL_JAMO_MIN = 55; // 지역 모드에서 자모 하나로 쓸 만큼 또렷한 점수
+function localComboOf(syl, cands) {
+  const boxes = comboBoxes(syl), out = [];
+  for (const [j, box] of boxes) {
+    const c = cands.filter(x => x.j === j && x.s >= LOCAL_JAMO_MIN).sort((p, q) => q.s - p.s)[0];
+    if (!c) return null;
+    out.push({ j, box, rec: { g: c.g, r: c.r, lat: c.lat, lon: c.lon }, paths: upright(c.g, c.r, c.lat, c.lon) });
+  }
+  return out;
 }
 function groupsSvg(groups, [ox, oy, W, H], color, sw) {
   return groups.map(({ j, box: [bx, by, bw, bh], paths }) => {
@@ -352,8 +366,14 @@ function renderList() {
       const m = document.createElement('span'); m.className = 'none';
       m.textContent = `'${u.char}' 모양 그대로인 길(자음·모음이 서로 떨어져 또렷한 것)은 ${mode === 'nation' ? '전국에서' : '이 지역에서'} 아직 못 찾았어요.`;
       row.appendChild(m);
+      if (u.kind === 'combo') {
+        const t = document.createElement('p'); t.className = 'none sub2';
+        t.textContent = '그래서 자모마다 다른 곳의 길을 모았어요:';
+        row.appendChild(t);
+        row.appendChild(jamoChips(u.combo.map(c => c.j), color, u.combo.map(c => c.rec)));
+      }
       const js = jamoOf(u.syl);
-      if (js.some(j => DEX[j])) {
+      if (u.kind === 'missing' && js.some(j => DEX[j])) {
         const t = document.createElement('p'); t.className = 'none sub2';
         t.textContent = u.kind === 'combo' ? '그래서 자모마다 다른 곳의 길을 모았어요:' : '이 글자를 이루는 자모 모양의 길이에요 (자모마다 다른 곳):';
         row.appendChild(t);

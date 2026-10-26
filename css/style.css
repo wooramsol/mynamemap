@@ -55,3 +55,8 @@ footer a { color: inherit; }
   #map { grid-row: 1; }
   #panel { grid-row: 2; border-right: 0; border-top: 1px solid var(--line); padding: 16px; }
 }
+
+.cand.off { opacity: .45; cursor: default; }
+.sub2 { width: 100%; margin: 8px 0 2px; }
+#dex { margin-top: 12px; width: 100%; }
+.cands > div { width: 100%; }

@@ -5,6 +5,7 @@ import { SUPPORTED } from './templates.js';
 import { findSyllable } from './syllable.js';
 import { buildSyllableTemplates, matchGlyphs } from './glyph.js';
 import { upright, comboBoxes, splitCand, jamoSeparated } from './jamosplit.js';
+import { fetchRoadsFromTiles } from './mvt.js';
 
 const COLORS = ['#e23b2e', '#2b6cdf', '#16a06a', '#d8860b', '#8a3fd1', '#d63384', '#0f8b9c', '#6b6b00', '#b5531b', '#3a4a8c'];
 // 여러 Overpass 서버에 동시에 요청해서 가장 먼저 오는 응답을 사용
@@ -80,6 +81,14 @@ async function runNation(name) {
 
 // ── 지역 모드 (지금 보는 지도 범위를 실시간 분석) ────────────────
 async function fetchRoads(b, foot) {
+  // 1) 지도 타일에서 길 읽기 (빠르고 늘 됨)  2) 안 되면 Overpass
+  try {
+    const osm = await fetchRoadsFromTiles([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()], foot, AbortSignal.timeout(30000));
+    if (osm.elements.length > 10) return osm;
+  } catch (e) { console.warn('tiles failed', e); }
+  return fetchRoadsOverpass(b, foot);
+}
+async function fetchRoadsOverpass(b, foot) {
   const excl = ['motorway', 'motorway_link', 'trunk', 'trunk_link', 'proposed', 'construction', 'abandoned', 'platform',
     'elevator', 'corridor', 'steps', 'bus_stop', 'raceway', 'rest_area', 'services'];
   if (!foot) excl.push('footway', 'path', 'cycleway', 'bridleway', 'track', 'pedestrian');
@@ -99,7 +108,7 @@ async function fetchRoads(b, foot) {
       return json;
     }));
   } catch (e) {
-    throw new Error('모든 지도 데이터 서버가 응답하지 않음');
+    throw new Error('지도 데이터 서버가 지금 붐벼서 응답하지 않아요. 잠시 뒤 다시 시도해 주세요');
   } finally {
     clearTimeout(timer);
   }
@@ -115,7 +124,7 @@ async function runLocal(name) {
   const syllables = decompose(name);
   const b = map.getBounds();
   if (areaKm2(b) > MAX_AREA_KM2) throw new Error(`범위가 너무 넓어요 (${areaKm2(b).toFixed(1)}km²). 지도를 조금 더 확대해 주세요.`);
-  setStatus('길 데이터를 불러오는 중… (지도 서버가 붐비면 1~2분 걸릴 수 있어요)');
+  setStatus('길 데이터를 불러오는 중…');
   const osm = await fetchRoads(b, $('foot').checked);
   const G = buildGraph(osm, [b.getCenter().lat, b.getCenter().lng]);
   const list = neededJamo(syllables);
